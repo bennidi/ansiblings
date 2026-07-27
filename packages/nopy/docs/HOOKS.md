@@ -51,19 +51,15 @@ Hooks can be synchronous or asynchronous (returning a `Promise`).
 
 ## Mechanics
 
-### Sequential Execution
+### Execution Order
 
-In sequential execution mode (the default), cubes added via hooks will follow the order in which they were pushed to the deployment plan:
+Cubes are always deployed sequentially, in the order they were pushed to the deployment plan. For a cube with hooks that means:
 
 1. Cubes from `before` hooks.
 2. The current cube itself.
 3. Cubes from `after` hooks.
 
-### Parallel Execution
-
-In parallel execution mode, cubes added via hooks **do not automatically inherit dependencies**.
-
-If a `before` hook calls `exec('setup-cube')`, it ensures that `setup-cube` is placed earlier in the deployment plan, but for parallel execution, you should still ensure that dependencies are correctly specified if one cube relies on another's completion.
+Because a `before` hook only places its cube *earlier in the plan*, it guarantees ordering but not much else — if the relationship is a real dependency rather than a one-off ordering nudge, declare it in `dependencies` so it is resolved and deduplicated like any other.
 
 ### Variable Passing
 

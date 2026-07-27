@@ -1,0 +1,529 @@
+# Cube bundles as npm packages
+
+Status: **plan, not a record.** Nothing here is implemented yet.
+
+Distributing cubes as npm packages so a project can `pnpm add @acme/cubes-net`
+and have its cubes show up in `nopy` alongside local ones.
+
+## Goals
+
+- A cube bundle is an ordinary npm package, publishable to npmjs or Gitea
+  through the existing release lanes.
+- A consuming project opts into a bundle explicitly, by name, in `.nopyrc.json`.
+- Existing manifests, dependency specs (`dependencies: () => ['apt:essentials']`)
+  and stored session history keep working untouched.
+- The in-repo `cubes/` tree becomes the first published bundle, proving the path.
+
+## Non-goals
+
+- Automatic discovery of bundles from the dependency tree. Cubes run privileged
+  deploy scripts against real hosts; a transitive dependency contributing one
+  silently is a supply-chain hole. Opt-in per package, always.
+- Namespacing or id rewriting. Ids stay flat and global (see *Decisions*).
+- Version compatibility checks between a bundle and the `nopy` running it.
+  Noted as a risk, deferred.
+
+## Decisions
+
+| Question | Decision |
+| --- | --- |
+| Duplicate cube ids across sources | **Hard error.** No precedence, no shadowing. Mitigation is a good error message, not a fallback. |
+| Id format | Unchanged, flat. The id is the session key (`dependencies.ts:135`); changing it breaks `--repeat-last` and `--history`. |
+| Discovery | Explicit `cubePackages` list in `.nopyrc.json`. |
+| Migrate in-repo `cubes/` | Yes — `packages/cubes-core`, as the proof of concept. |
+| Split an authoring package (`@bitsquare/nopy-cube`) | **Yes.** Bundles take a regular dependency on it; `@bitsquare/nopy` re-exports it for backwards compatibility. See *Phase 4*. |
+
+## Current state
+
+What already works, unchanged:
+
+- `--chdir <cubeDir>` (`nopy.executor.ts`) means a `deploy.py` under
+  `node_modules` runs fine; pyinfra only needs the path.
+- `scanDirectory` skips `node_modules` when *descending* (`loader.ts:101`), not
+  for the root it is handed. So `"cubeDirs": ["./node_modules/@acme/cubes-net/cubes"]`
+  works today. That is the escape hatch until this lands, and it stays working
+  afterwards.
+
+What blocks a clean story:
+
+1. **Manifest imports.** `manifest.mjs` does `import { cubes } from '@bitsquare/nopy'`,
+   resolved by ordinary Node resolution from the manifest's own directory. From
+   inside `node_modules/@acme/cubes-net/`, that resolves upward into the
+   consumer's `node_modules` — fine if the consumer installed `@bitsquare/nopy`,
+   `ERR_MODULE_NOT_FOUND` if `nopy` is only installed globally. Same gotcha
+   CLAUDE.md already documents for the local `cubes/` tree.
+2. **No way to name a package** in config, only paths.
+3. **Recursively scanning `node_modules` is not a workaround.** pnpm symlinks
+   direct deps, and `readdir(withFileTypes)` reports a symlink as
+   `isSymbolicLink()`, not `isDirectory()` — the scan would skip every package.
+   Package roots must be resolved explicitly.
+
+## Phase 0 — fixes that land first
+
+Independent of packaging, and the duplicate-id work depends on them.
+
+**0.1 `scanDirectory` drops subtrees on duplicates.** `loader.ts:84-87` pushes
+the error and `return`s, which exits before the recursive descent at line 100.
+Cubes nested below a duplicate never get scanned, so the error report is
+incomplete: you fix one collision, re-run, find the next. Should record the
+duplicate and keep descending.
+
+**0.2 Duplicate detection is order-dependent.** `loadCubes()` runs
+`Promise.all` over folders into a shared `cubes` object, so which source is
+"first" and which is "the duplicate" varies run to run. Restructure: the scan
+emits a flat list of candidates, then a single grouping pass builds `cubes` and
+the error list. Makes the hard-error path deterministic, which the tests need.
+
+**0.3 `apt:essentials` is already declared twice.** `cubes/apt/essentials`
+declares it via `id`; `packages/nopy/cubes/apt/essentials` declares it via the
+`[apt:essentials]` prefix in `name`. `cubeDirs` merges root-first, so running
+`nopy` from `packages/nopy` already collects both and errors. Rename the
+`packages/nopy/cubes` fixtures (`[test:apt-essentials]`, `[test:apt-all]`,
+`[test:apt-more]`) — they are dev fixtures, not real cubes, and the migration in
+Phase 5 makes the collision permanent otherwise.
+
+**0.4 `coerceValue` breaks if zod is ever duplicated.** `nopy.prompts.ts:147-154`
+discriminates with `instanceof z.ZodDefault`, `z.ZodBoolean`, `z.ZodNumber` and
+friends — checks against the *running CLI's* zod instance. The moment a bundle
+resolves its own copy of zod (entirely possible once manifests arrive from
+`node_modules`; see Phase 4), every check returns false and `coerceValue` falls
+through to the raw string, silently. Booleans stop being booleans.
+
+Rewrite against the string discriminant, which is instance-agnostic. Verified on
+the installed zod 4.4.3:
+
+```
+z.boolean().default(false).def.type        → 'default'
+z.boolean().default(false).def.innerType   → { def: { type: 'boolean' } }
+z.number().def.type                        → 'number'
+```
+
+Do this before anything else in Phase 4 lands, and it stops being a footgun for
+the local `cubes/` tree too.
+
+## Phase 1 — the bundle contract
+
+A cube bundle is an npm package with a `nopy` field:
+
+```json
+{
+  "name": "@acme/cubes-net",
+  "version": "1.0.0",
+  "type": "module",
+  "nopy": { "cubes": ["./cubes"] },
+  "files": ["cubes", "README.md", "LICENSE"],
+  "keywords": ["nopy", "nopy-cubes", "pyinfra"],
+  "dependencies": {
+    "@bitsquare/nopy-cube": "^1.0.0",
+    "zod": "^4.4.3"
+  },
+  "publishConfig": { "access": "public" }
+}
+```
+
+Rules:
+
+- `nopy.cubes` — directories relative to the package root, scanned exactly like
+  `cubeDirs` entries. Required; a package listed in `cubePackages` without a
+  `nopy` field is an error, not a silent skip. Listing it means the user expects
+  cubes from it.
+- Both dependencies are **regular dependencies, not peers**, and both are
+  load-bearing: a manifest imports `Manifest` from `@bitsquare/nopy-cube` and `z`
+  from `zod`. `@bitsquare/nopy-cube` peer-depends on zod, so the bundle's copy is
+  the one everybody uses — see Phase 4.
+- The package needs no `exports` entry for this to work — resolution reads
+  `package.json` off disk (Phase 2), so the `exports` map is irrelevant.
+- **A bundle's directory is read-only at runtime.** Under pnpm, `node_modules`
+  content is hardlinked into the global store; a cube writing next to its own
+  `deploy.py` corrupts that store for every project on the machine. Cubes must
+  write to `/tmp` or the remote host, never their own dir.
+- A bundle must not ship a `.nopyrc.json`. Config discovery walks up from
+  `process.cwd()`, never from cube directories, so it would never be read.
+
+## Phase 2 — resolution
+
+### Config surface
+
+```json
+{
+  "cubePackages": ["@acme/cubes-net", "@acme/cubes-caddy"]
+}
+```
+
+Merges through the existing `resolution` machinery for free — arrays concat and
+dedupe — so a parent config supplies the org baseline and a child adds to it.
+
+**Resolution origin.** A package must be resolved from *the directory of the
+config file that declared it*, not from `process.cwd()`. Otherwise a bundle
+listed in `~/.nopyrc.json` cannot resolve unless every project happens to depend
+on it. This is the same problem `PATH_PROPERTIES` solves for `cubeDirs`, but the
+output is a tagged reference rather than a rewritten string:
+
+```ts
+export interface CubePackageRef {
+  spec: string;   // '@acme/cubes-net'
+  from: string;   // dirname of the .nopyrc.json that declared it
+}
+```
+
+So the file format and the loaded format diverge for this one key:
+
+```ts
+interface NopyConfigFile extends Omit<Partial<NopyConfig>, 'cubePackages'> {
+  cubePackages?: string[];
+  resolution?: ResolutionConfig;
+}
+
+interface NopyConfig {
+  cubePackages: CubePackageRef[];
+  // ...
+}
+```
+
+`resolveConfigPaths()` performs the `string → CubePackageRef` conversion, next to
+where it resolves `PATH_PROPERTIES`. Two consequences to handle:
+
+- `mergeValue`'s array dedupe only fires when every element is a primitive
+  (`config.ts:142`), so refs fall through to plain concat. Dedupe by `spec` in
+  the resolver instead.
+- Dedupe is **last-wins**: merge order is root-first, so the last occurrence is
+  the most specific config, and its `from` is the right resolution origin.
+
+### Resolver
+
+New file `packages/nopy/src/cubes/packages.ts`:
+
+```ts
+export interface CubePackage {
+  name: string;
+  root: string;
+  dirs: string[];   // absolute, from nopy.cubes
+}
+
+export function resolveCubePackages(
+  refs: CubePackageRef[]
+): { packages: CubePackage[]; errors: string[] };
+```
+
+Locate the package root without going through `exports` and without tripping on
+pnpm symlinks:
+
+```ts
+const req = createRequire(path.join(ref.from, 'noop.js'));
+for (const dir of req.resolve.paths(ref.spec) ?? []) {
+  const manifest = path.join(dir, ref.spec, 'package.json');
+  if (fs.existsSync(manifest)) return path.dirname(manifest);
+}
+```
+
+`resolve.paths()` walks the `node_modules` chain upward from `ref.from` plus the
+global paths; `existsSync` follows symlinks, so pnpm's
+`node_modules/@acme/cubes-net → ../.pnpm/…` resolves correctly.
+
+Errors (each aborts the run, consistent with the existing `errors` contract):
+
+- package not found on any candidate path
+- `package.json` unparseable
+- no `nopy.cubes`, or it is not a non-empty array of strings
+- a `nopy.cubes` entry escapes the package root, or does not exist
+
+### Wiring
+
+`findCubeDirectories()` currently returns `string[]`. It becomes the union of
+three sources, each tagged so the loader can attribute a cube to it:
+
+```ts
+export type CubeRoot =
+  | { type: 'dir'; dir: string }                              // cubeDirs, .npcubes markers
+  | { type: 'package'; dir: string; packageName: string };    // cubePackages
+
+export function findCubeRoots(): { roots: CubeRoot[]; errors: string[] };
+```
+
+Keep `findCubeDirectories()` as a thin wrapper returning `roots.map(r => r.dir)` —
+it is exported from `src/cubes/index.ts` and covered by tests. The
+`node_modules` skip inside `scanDirectory` stays and is now *correct*: a
+bundle's own `node_modules` should not be scanned.
+
+## Phase 3 — hard errors with attribution
+
+`Cube` gains a source, as an optional fourth constructor parameter so the public
+signature stays backwards compatible:
+
+```ts
+export type CubeSource =
+  | { type: 'dir'; dir: string }
+  | { type: 'package'; packageName: string; dir: string };
+
+class Cube {
+  constructor(
+    manifest: Manifest<Schema>,
+    dir: string,
+    deployScript: string,
+    source: CubeSource = { type: 'dir', dir }
+  ) {}
+}
+```
+
+The duplicate error carries both sources and is order-independent (Phase 0.2):
+
+```
+Duplicate cube id 'apt:essentials' from 2 sources:
+  package @bitsquare/cubes-core  /…/node_modules/@bitsquare/cubes-core/cubes/apt/essentials
+  directory                      /repo/packages/nopy/cubes/apt/essentials
+Rename one of them, or remove a source from .nopyrc.json.
+```
+
+There is deliberately no override, alias or precedence rule. If two bundles ever
+claim the same id they are mutually exclusive, and the fix is upstream.
+
+Surface the source in the interactive picker and in `--json` output so a user can
+see where a cube came from before running it.
+
+## Phase 4 — `@bitsquare/nopy-cube`, the authoring package
+
+The problem: a manifest does `import { cubes } from '@bitsquare/nopy'`, resolved
+by ordinary Node resolution from the manifest's own directory. From inside
+`node_modules/@acme/cubes-net/`, that only resolves if the consumer installed
+`@bitsquare/nopy` locally — a globally-installed CLI leaves nothing to find.
+
+The fix is to give bundles something they can depend on *normally*, so resolution
+is plain, boring, spec-compliant Node with no loader tricks in the critical path.
+
+### The package
+
+`packages/nopy-cube` — the `Manifest` factory, the `Cube` class, and the types
+from `cubes/types.ts`. No CLI, no `execa`, `inquirer`, `enquirer`, `zx`, or
+`commander`. Today a cube manifest — a file that ships nothing but data — drags
+the entire CLI in as a transitive dependency; this makes the authoring surface
+honest about how small it is, and gives the *contract* a version number that
+moves independently of the CLI's.
+
+```json
+{
+  "name": "@bitsquare/nopy-cube",
+  "version": "1.0.0-alpha0",
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "peerDependencies": { "zod": "^4.4.3" },
+  "files": ["dist", "README.md", "LICENSE"]
+}
+```
+
+**zod is a peer, deliberately.** Bundles declare zod as a regular dependency, so
+exactly one zod instance serves the manifest, the schema it builds, and the
+`Manifest` factory. Phase 0.4 removes the CLI's `instanceof` dependence on that
+being the *same* copy the CLI uses, but keeping the bundle side single-instance
+is still the right default.
+
+### Moving `cubes/types.ts`
+
+`@bitsquare/nopy` re-exports everything from `@bitsquare/nopy-cube` — through
+`src/cubes/index.ts` and the `cubes` namespace in `src/nopy.cubes.ts`, both
+already coverage-excluded barrels — so `import { cubes } from '@bitsquare/nopy'`
+in every existing manifest keeps working unchanged. Nothing in `cubes/` has to be
+touched at migration time.
+
+Repo plumbing this requires:
+
+- `tsconfig.base.json`: add `"@bitsquare/nopy-cube": ["./packages/nopy-cube/src"]`
+  to `paths`.
+- Root `tsconfig.json`: add the project reference.
+- `packages/nopy/tsconfig.json`: `references` is currently `[]` — add
+  `{ "path": "../nopy-cube" }`. This is the first reference edge in the repo, so
+  `tsc --build` ordering starts mattering.
+- `packages/nopy/package.json`: `"@bitsquare/nopy-cube": "workspace:*"`.
+- A `vitest.config.ts` for the new package with the same thresholds. `Manifest()`,
+  `Manifest.create()` and `Cube.getDefaults()` all carry logic, so the relevant
+  cases move over from `tests/cubes.factories.test.ts`.
+
+### The release lane needs fixing first
+
+This is the part that is easy to miss. `link-workspace-packages` is unset and
+pnpm 10+ defaults it to `false`, so a plain semver range would resolve
+`@bitsquare/nopy-cube` from the registry instead of linking the workspace copy —
+the dependency has to use `workspace:*`.
+
+But **both workflows publish with `npm publish`**, and npm does not understand
+the `workspace:` protocol. `@bitsquare/nopy` would ship a manifest carrying
+`"@bitsquare/nopy-cube": "workspace:*"`, which fails on install with
+`EUNSUPPORTEDPROTOCOL`. This has never mattered because the two current packages
+do not depend on each other; `nopy → nopy-cube` is the first edge, and the PoC
+bundle in Phase 5 adds a second.
+
+Pick one before publishing anything:
+
+- **Switch to `pnpm publish --no-git-checks`**, which rewrites the protocol to a
+  concrete version on pack. Cleanest, but changes the publish step in both
+  workflows and pulls in pnpm's own lifecycle behaviour.
+- **Rewrite the range with `npm pkg set` before publishing**, extending the
+  pattern `publish-snapshot.yml` already uses for `version`. In `release.yml` one
+  package ships at a time, so it pins to whatever version `packages/nopy-cube/package.json`
+  declares at that commit. In `publish-snapshot.yml` the loop needs to become two
+  passes — compute every snapshot version first, then publish — so `nopy` can pin
+  the exact `nopy-cube` snapshot from the same run.
+
+Recommendation: `pnpm publish`, and verify against the Gitea registry with a
+throwaway version before the first real release.
+
+### Also: the resolve hook
+
+Independent of the split, and worth building anyway — it retires the
+`ERR_MODULE_NOT_FOUND` gotcha CLAUDE.md documents for the local `cubes/` tree,
+where manifests import `@bitsquare/nopy` from a directory that has no link to it.
+
+With the split, the hook is a convenience rather than load-bearing: bundles
+resolve `@bitsquare/nopy-cube` through their own `node_modules` and never reach
+it.
+
+New `packages/nopy/src/nopy.resolve-hook.mjs`, registered once from `loadCubes()`
+before the first `import(manifestPath)`:
+
+```ts
+module.register('./nopy.resolve-hook.mjs', import.meta.url, {
+  data: { fallback: import.meta.resolve('./index.js') },
+});
+```
+
+The hook tries `next(specifier, ctx)` **first** and only falls back to the
+running CLI's own copy on failure. That ordering matters: a consumer that has its
+own `@bitsquare/nopy` installed keeps using it, so the hook never silently
+introduces version skew.
+
+Constraints:
+
+- `module.register()` is process-global and cannot be undone. Install it once,
+  behind a module-level guard.
+- The hook file runs on a separate thread; the `data` payload must be
+  structured-cloneable (a string URL is).
+- The `.mjs` must ship in `dist` and be listed in `files` — it already is, via
+  the `dist` entry.
+- It resolves `@bitsquare/nopy`, not `@bitsquare/nopy-cube`. Bundles never depend
+  on the hook; only the in-repo `cubes/` tree and hand-written local cubes do.
+
+## Phase 5 — proof of concept: `packages/cubes-core`
+
+Depends on Phase 4 shipping first — the bundle cannot declare
+`@bitsquare/nopy-cube` as a dependency until it exists, and the publish-lane fix
+has to be in place before either package is published.
+
+1. `git mv cubes packages/cubes-core/cubes` — preserves per-file history.
+2. Add `packages/cubes-core/package.json` per the Phase 1 contract. Version
+   `1.0.0-alpha0`, tracking the current alpha train. Not private. Its
+   `@bitsquare/nopy-cube` dependency uses `workspace:*` in the repo, which is
+   exactly the case the Phase 4 publish fix has to handle.
+   Migrating the manifests' `import { cubes } from '@bitsquare/nopy'` to
+   `import { Manifest } from '@bitsquare/nopy-cube'` is optional — the re-export
+   keeps the old form working — but doing it here is what proves the bundle
+   resolves without the CLI present at all.
+3. Root `.nopyrc.json`: **replace** `"cubeDirs": ["./cubes"]` with
+   `"cubePackages": ["@bitsquare/cubes-core"]`. Replace, not add — keeping both
+   means every id resolves from two sources and the hard error fires on every
+   run.
+4. Root `package.json`: add `"@bitsquare/cubes-core": "workspace:*"` to
+   `devDependencies`, so pnpm symlinks it into the root `node_modules`. This is
+   what makes the PoC exercise the real pnpm symlink resolution path rather than
+   a plain directory.
+5. `packages/nopy/.nopyrc.json` keeps `"cubeDirs": ["./cubes"]` for its fixtures.
+   Config merges root-first, so running from `packages/nopy` now pulls in
+   `@bitsquare/cubes-core` *and* the fixtures — which is exactly the collision
+   Phase 0.3 renames away.
+6. Workflow changes are limited to the publish-lane fix from Phase 4.
+   `publish-snapshot.yml` loops `for dir in packages/*/` and picks both new
+   packages up automatically; `release.yml` resolves `packages/<pkg>` from the
+   tag, so `cubes-core-v1.0.0` and `nopy-cube-v1.0.0` work as-is. Verify on the
+   first snapshot run that a package with no `build` script is skipped cleanly by
+   `pnpm -r run build` (it is) and that publishing is happy with no lifecycle
+   scripts.
+7. No `tsconfig` reference for `cubes-core` — the bundle has no TypeScript. (The
+   `nopy-cube` references from Phase 4 are separate.)
+8. Biome already lints `cubes/**/*.mjs` from the root; only the path changes.
+
+### Verifying the PoC
+
+- **In-workspace:** `pnpm --filter @bitsquare/nopy run nopy -P` from the repo
+  root lists `net:tailscale`, `apt:install`, … and prints deploy commands whose
+  `--chdir` points into `node_modules/@bitsquare/cubes-core/cubes/…`.
+- **Out-of-workspace (the real test):** `npm pack` the bundle, install the
+  tarball into a throwaway directory with a `.nopyrc.json` naming it, install
+  `nopy` *globally*, and run `nopy -P`. This is what actually exercises Phase 4 —
+  a manifest resolving its import from a `node_modules` tree that has no
+  `@bitsquare/nopy` in it. Check the installed tarball's `package.json` really
+  carries a concrete `@bitsquare/nopy-cube` range and not `workspace:*`.
+
+## Phase 6 — documentation
+
+- `CLAUDE.md`: the repo table gains two rows (`packages/nopy-cube`,
+  `packages/cubes-core`) and loses the `cubes/` one; "The two packages do not
+  depend on each other" is no longer true; the loader section in *nopy
+  architecture*; and the *Gotcha* paragraph, which the resolve hook retires.
+- `packages/nopy/docs/CUBE-BUNDLES.md` (new): authoring guide — package shape,
+  read-only constraint, id collision policy, publishing.
+- `packages/nopy/docs/API.md` + `README.md`: `cubePackages`.
+- `README.PUBLISH.md`: `nopy-cube-v*` and `cubes-core-v*` as new tag prefixes,
+  plus the ordering constraint — `nopy-cube` releases before anything that
+  depends on it.
+
+## Testing
+
+The coverage gate (85 % branches/functions, 80 % lines/statements, per package)
+is not a CI flag — new modules without tests fail the gate locally and on the
+runner alike.
+
+`tests/cubes.packages.test.ts` (new) — build a fake `node_modules` tree under
+`os.tmpdir()` and `chdir` into it, as the existing loader/config tests do:
+
+- resolves a scoped and an unscoped package
+- resolves through a symlinked package directory (mimicking pnpm)
+- resolves from the declaring config's directory, not `cwd`
+- missing package → error naming the spec
+- package without `nopy.cubes` → error
+- `nopy.cubes` entry that does not exist, and one that escapes the root → errors
+- last-wins dedupe when parent and child config both name a package
+
+`tests/cubes.loader.test.ts` — package-sourced cubes load; `source` attribution
+is correct for all three root types.
+
+`tests/cubes.loader.edge.test.ts` — duplicate across a dir and a package errors
+and names both; cubes nested below a duplicate still get scanned (Phase 0.1);
+the error is identical regardless of scan order (Phase 0.2).
+
+`tests/config.test.ts` — `cubePackages` merge, `override` resolution strategy,
+`CubePackageRef` provenance.
+
+`tests/prompts.test.ts` — `coerceValue` against schemas built by a *different*
+zod instance, so Phase 0.4 cannot silently regress to `instanceof`.
+
+`packages/nopy-cube/` — its own `vitest.config.ts` at the same thresholds. The
+`Manifest()` / `Manifest.create()` / `Cube.getDefaults()` cases move over from
+`tests/cubes.factories.test.ts`; what stays behind is whatever tests the
+re-export surface.
+
+Resolve hook — `module.register()` is process-global, so this cannot be unit
+tested in-process. Add an integration test that spawns the CLI as a child process
+against a fixture tree, under the existing `test:integration` script.
+
+## Risks
+
+1. **`module.register()` is irreversible and process-wide.** It affects
+   everything loaded afterwards, including the CLI's own lazy imports. Guarded
+   single install, `next()`-first ordering.
+2. **Hard-error duplicates have no escape hatch.** Two bundles claiming one id
+   cannot be used together, full stop. If that bites in practice the follow-up is
+   a `cubeAliases` map or a per-package id prefix — explicitly out of scope here.
+3. **Store corruption.** A bundled cube writing to its own directory damages the
+   pnpm global store for every project on the machine. Documented in Phase 1;
+   a runtime warning is a possible follow-up.
+4. **No version compatibility check.** A bundle authored against a future `nopy`
+   loaded by an older one fails at manifest-import time with a confusing error.
+   A `nopy.engines` field checked at resolution time would fix it. Deferred.
+5. **Bundles vendoring cubes in their own `node_modules`** will not be found, by
+   design.
+6. **`workspace:*` escaping into a published manifest.** The failure is silent at
+   publish time and only shows up when someone installs the package. Phase 4
+   fixes the lane; a `postpack` assertion that no dependency range starts with
+   `workspace:` would make it impossible to regress.
+7. **Three packages, three version lines.** `nopy-cube` is the contract, so a
+   breaking change there ripples to every published bundle in the wild — which is
+   the point of versioning it separately, but it means the compatibility question
+   from risk 4 gets more pressing, not less.

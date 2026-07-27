@@ -7,10 +7,12 @@ This document tracks the major refactoring of the `nopy` package.
 ### 1. Remove parallel execution
 - **Status**: ✅ Completed
 - **Goal**: Remove all logic supporting parallel execution of cubes to simplify the execution flow and improve reliability.
+- **Rationale**: The feature never shipped. Concurrent pyinfra processes interleave their output, which made deployment logs unreadable — a cost that outweighed the wall-clock saving. Do not reintroduce it without first solving per-cube output buffering.
 - **Context**:
     - Parallelism removed from `NopyConfig`, `NopyOptions`, and `executeDeployCalls`.
     - `buildExecutionStages` deleted.
     - CLI flags `--parallel` and `--concurrency` removed.
+    - Documentation caught up later: `README.md`, `docs/API.md`, and `docs/HOOKS.md` had all continued to describe the feature as if it existed.
 - **Proposed Solution**: (Done)
 
 ### 2. Rework cube building process & Dependency Resolution

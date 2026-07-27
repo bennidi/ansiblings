@@ -41,7 +41,6 @@ const result = await nopy({
 | `saveSession` | `string` | - | Path to save session file |
 | `loadSession` | `string` | - | Path to load session for replay |
 | `dryRun` | `boolean` | `false` | Show execution plan without running |
-| `parallel` | `boolean` | `false` | Execute independent cubes in parallel |
 | `continueOnError` | `boolean` | `false` | Continue after failures |
 | `jsonOutput` | `boolean` | `false` | Output results as JSON |
 
@@ -87,7 +86,7 @@ interface Cube<Schema extends z.AnyZodObject = z.AnyZodObject> {
 
 #### `Manifest<Schema>`
 
-Cube manifest (used in `*.manifest.mjs` files).
+Cube manifest (used in `manifest.mjs` files).
 
 ```typescript
 interface Manifest<Schema extends z.AnyZodObject = z.AnyZodObject> {
@@ -160,23 +159,14 @@ const order = resolveDependencies(cubes, ['apt-all']);
 
 **Throws:** `Error` if cube not found or circular dependency detected
 
-#### `buildExecutionStages(cubes, selectedCubeNames)`
-
-Groups cubes into stages for parallel execution.
-
-```typescript
-const stages = buildExecutionStages(cubes, ['apt-all', 'docker']);
-// Returns: [['apt:essentials'], ['apt-more', 'docker'], ['apt-all']]
-```
-
-**Returns:** `string[][]` - Array of stages
-
-#### `createManifest(options)`
+#### `cubes.Manifest(options)`
 
 Factory function for creating cube manifests.
 
 ```typescript
-export default createManifest({
+import { cubes } from '@bitsquare/nopy';
+
+export default cubes.Manifest({
   name: 'My Cube',
   dependencies: () => [['apt:essentials']],
   schema: z.object({
@@ -184,6 +174,8 @@ export default createManifest({
   }),
 });
 ```
+
+`createManifest` and `manifest` are exported as equivalent aliases; `cubes.Manifest` is the documented form.
 
 #### `uniqid(length?)`
 
@@ -239,8 +231,6 @@ Options for deployment execution.
 
 ```typescript
 interface ExecutionOptions {
-  parallel?: boolean;
-  concurrency?: number;
   continueOnError?: boolean;
   dryRun?: boolean;
   onProgress?: (result: ExecutionResult, completed: number, total: number) => void;
@@ -252,12 +242,11 @@ interface ExecutionOptions {
 
 #### `executeDeployCalls(calls, options?)`
 
-Executes an array of deployment calls.
+Executes an array of deployment calls sequentially, in the order they were built.
 
 ```typescript
 const results = await executeDeployCalls(calls, {
-  parallel: true,
-  concurrency: 4,
+  continueOnError: false,
   onProgress: (result, completed, total) => {
     console.log(`${completed}/${total}`);
   },
@@ -581,9 +570,6 @@ nopy install -l ./my-session.json
 # Dry run
 nopy install -n
 
-# Parallel execution
-nopy install -p
-
 # JSON output
 nopy install -j
 
@@ -597,21 +583,27 @@ nopy install -c
 
 ### File Structure
 
+A cube is a directory containing both a `manifest.mjs` and a `deploy.py`:
+
 ```
 cubes/
 └── my-cube/
-    ├── my-cube.manifest.mjs
-    └── my-cube.deploy.py
+    ├── manifest.mjs
+    └── deploy.py
 ```
+
+Cube directories may be nested for grouping (`cubes/apt/install/`), and any extra files alongside the pair are available to the deploy script via relative paths.
+
+The prefixed forms `<cube-name>.manifest.mjs` and `<cube-name>.deploy.py` are still recognized for backwards compatibility.
 
 ### Manifest Example
 
 ```javascript
-// my-cube.manifest.mjs
-import { createManifest } from '@bitsquare/nopy';
+// manifest.mjs
+import { cubes } from '@bitsquare/nopy';
 import { z } from 'zod';
 
-export default createManifest({
+export default cubes.Manifest({
   name: 'My Cube',
   dependencies: () => [['apt:essentials']],
   schema: z.object({
@@ -634,7 +626,7 @@ export default createManifest({
 ### Deploy Script Example
 
 ```python
-# my-cube.deploy.py
+# deploy.py
 from pyinfra import host
 from pyinfra.operations import apt, server
 
