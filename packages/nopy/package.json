@@ -1,6 +1,6 @@
 {
   "name": "@bitstack/nopy",
-  "version": "1.0.0-alpha3",
+  "version": "1.0.0-alpha4",
   "description": "A system to simplify pyinfra script management and execution.",
   "keywords": [
     "pyinfra",
