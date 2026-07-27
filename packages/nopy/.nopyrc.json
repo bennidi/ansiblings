@@ -1,0 +1,11 @@
+{
+  "hosts": ["@docker/nopy-test-container", "tecpi.local"],
+  "cubeDirs": ["./cubes"],
+  "env": {
+    "KEY_DIR": "../../vault/tmp"
+  },
+  "log": {
+    "verbosity": "trace",
+    "debug": true
+  }
+}

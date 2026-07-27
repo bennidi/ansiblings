@@ -1,0 +1,41 @@
+{
+  "name": "@bitsquare/ansiblings",
+  "private": true,
+  "engines": {
+    "node": ">=21"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "build:clean": "pnpm clean && pnpm build",
+    "build:tsgo": "tsgo --build",
+    "clean": "pnpm -r run clean",
+    "test": "pnpm -r run test",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:legacy": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@logtape/logtape": "0.8.0",
+    "@types/jest": "29.5.5",
+    "@types/node": ">=21",
+    "@typescript/native-preview": "7.0.0-dev.20260303.1",
+    "ts-node": "10.9.2",
+    "typescript": "5.7.3"
+  },
+  "dependencies": {
+    "commander": "^13.1.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/jest": "29.5.5",
+      "@types/node": ">=21",
+      "@logtape/logtape": "0.8.0",
+      "ts-node": "10.9.2",
+      "typescript": "5.7.3",
+      "commander": "^13.1.0"
+    }
+  }
+}

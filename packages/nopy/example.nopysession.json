@@ -1,0 +1,18 @@
+{
+  "name": "Example Deployment Session",
+  "cubes": [
+    {
+      "key": "apt:essentials",
+      "variables": {
+        "UPDATE": true
+      }
+    }
+  ],
+  "hosts": ["@docker/nopy-test-ubuntu"],
+  "env": {
+    "KEY_DIR": "../../vault/tmp"
+  },
+  "auth": {
+    "method": "ssh-key"
+  }
+}

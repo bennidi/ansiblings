@@ -1,0 +1,9 @@
+{
+  "hosts": [],
+  "cubeDirs": ["./cubes"],
+  "env": {},
+  "log": {
+    "verbosity": "info",
+    "debug": false
+  }
+}

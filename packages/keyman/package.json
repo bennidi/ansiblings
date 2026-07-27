@@ -1,0 +1,29 @@
+{
+  "name": "@bitstack/keyman",
+  "description": "A system to simplify ssh key management",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "author": "bitsquare",
+  "bin": "dist/keyman.cli.js",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "tsgo && chmod +x dist/keyman.cli.js && npm link",
+    "build:legacy": "tsc && chmod +x dist/keyman.cli.js && npm link",
+    "prepublishOnly": "npm run build",
+    "keyman": "node --loader ts-node/esm src/keyman.bin.ts"
+  },
+  "engines": {
+    "node": ">=21.0.0"
+  },
+  "files": ["dist/"],
+  "dependencies": {
+    "execa": "9.5.2",
+    "inquirer": "8.2.4",
+    "ts-node": ">=10.9.1",
+    "typed-dotenv": "10.0.2",
+    "typescript": ">=5.6.3",
+    "zod": "^3.24.1",
+    "zx": "^8.3.0"
+  }
+}
