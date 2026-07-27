@@ -8,8 +8,8 @@ import type { Variables } from '../nopy.common.js';
 import type { NopyConfig } from '../nopy.config.js';
 import type { DeployCall } from '../nopy.executor.js';
 import { VariableAssignment } from '../nopy.prompts.js';
-import { type CubeSession, type NopySession } from '../nopy.session.js';
-import type { Cube, CubeVariables, DependencySpec, HookContext } from './types.js';
+import type { CubeSession, NopySession } from '../nopy.session.js';
+import type { Cube, CubeVariables, HookContext } from './types.js';
 
 const log = getLogger(['nopy', 'resolution']);
 
@@ -40,7 +40,11 @@ export class BuildContext {
   /**
    * Resolves a cube, its dependencies, and hooks recursively
    */
-  public async resolveCube(cubeId: string, host: string, overrides: CubeVariables = {}): Promise<void> {
+  public async resolveCube(
+    cubeId: string,
+    host: string,
+    overrides: CubeVariables = {}
+  ): Promise<void> {
     const cube = this.allCubes[cubeId];
     if (!cube) {
       throw new Error(`Cube not found: ${cubeId}`);
@@ -56,7 +60,7 @@ export class BuildContext {
 
     // 2. Variable collection
     if (this.options.isSessionReplay) {
-      const sessionCube = this.session.cubes.find(c => c.key === cubeId);
+      const sessionCube = this.session.cubes.find((c) => c.key === cubeId);
       if (sessionCube) {
         this.variables.assign(cubeId, 'defaults', sessionCube.variables);
       }
@@ -101,7 +105,7 @@ export class BuildContext {
   private buildDeployCall(cube: Cube, host: string): void {
     const cubeId = cube.id;
     const callKey = `${cubeId}:${host}`;
-    
+
     if (this.resolvedCubes.has(callKey)) return;
 
     const parts: string[] = [];
@@ -128,7 +132,7 @@ export class BuildContext {
       dependencies: [],
     });
 
-    if (!this.cubeSessions.some(s => s.key === cubeId)) {
+    if (!this.cubeSessions.some((s) => s.key === cubeId)) {
       this.cubeSessions.push({
         key: cubeId,
         variables: this.variables.get(cubeId, 'prompts'),

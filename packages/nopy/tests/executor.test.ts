@@ -2,7 +2,7 @@
  * Tests for nopy.executor module
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type DeployCall,
   type ExecutionResult,
@@ -102,6 +102,12 @@ describe('outputExecutionPlan', () => {
 
   beforeEach(() => {
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  // vitest reuses an existing spy rather than re-wrapping, so recorded calls
+  // would otherwise leak from one test into the next.
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('outputs text format by default', () => {

@@ -35,7 +35,9 @@ describe('BuildContext.resolveCube', () => {
     const cubeA = createTestCube('cube-a');
     const cubes = { 'cube-a': cubeA };
     const vars = new Variables();
-    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, { method: 'ssh' });
+    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, {
+      method: 'ssh',
+    });
 
     await context.resolveCube('cube-a', 'host1');
 
@@ -49,7 +51,9 @@ describe('BuildContext.resolveCube', () => {
     const cubeB = createTestCube('cube-b', () => ['cube-a']);
     const cubes = { 'cube-a': cubeA, 'cube-b': cubeB };
     const vars = new Variables();
-    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, { method: 'ssh' });
+    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, {
+      method: 'ssh',
+    });
 
     await context.resolveCube('cube-b', 'host1');
 
@@ -62,35 +66,41 @@ describe('BuildContext.resolveCube', () => {
   it('resolves dynamic dependencies based on variables', async () => {
     const cubeA = createTestCube('cube-a');
     const cubeB = createTestCube('cube-b');
-    const cubeC = createTestCube('cube-c', (vars) => vars.USE_A ? ['cube-a'] : ['cube-b']);
-    
+    const cubeC = createTestCube('cube-c', (vars) => (vars.USE_A ? ['cube-a'] : ['cube-b']));
+
     cubeC.manifest.schema = z.object({ USE_A: z.boolean().default(true) });
 
     const cubes = { 'cube-a': cubeA, 'cube-b': cubeB, 'cube-c': cubeC };
-    
+
     // Test with USE_A = true
     const vars1 = new Variables();
-    const context1 = new BuildContext(cubes, vars1, { cubes: [] } as any, { env: {} } as any, { method: 'ssh' });
+    const context1 = new BuildContext(cubes, vars1, { cubes: [] } as any, { env: {} } as any, {
+      method: 'ssh',
+    });
     await context1.resolveCube('cube-c', 'host1');
-    expect(context1.deployCalls.map(c => c.cube)).toEqual(['cube-a', 'cube-c']);
+    expect(context1.deployCalls.map((c) => c.cube)).toEqual(['cube-a', 'cube-c']);
 
     // Test with USE_A = false
     const vars2 = new Variables();
     vars2.assign('cube-c', 'params', { USE_A: false });
-    const context2 = new BuildContext(cubes, vars2, { cubes: [] } as any, { env: {} } as any, { method: 'ssh' });
+    const context2 = new BuildContext(cubes, vars2, { cubes: [] } as any, { env: {} } as any, {
+      method: 'ssh',
+    });
     await context2.resolveCube('cube-c', 'host1');
-    expect(context2.deployCalls.map(c => c.cube)).toEqual(['cube-b', 'cube-c']);
+    expect(context2.deployCalls.map((c) => c.cube)).toEqual(['cube-b', 'cube-c']);
   });
 
   it('passes variables to dependencies', async () => {
     const cubeA = createTestCube('cube-a');
     cubeA.manifest.schema = z.object({ VAR: z.string() });
-    
+
     const cubeB = createTestCube('cube-b', () => [['cube-a', { VAR: 'from-b' }]]);
-    
+
     const cubes = { 'cube-a': cubeA, 'cube-b': cubeB };
     const vars = new Variables();
-    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, { method: 'ssh' });
+    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, {
+      method: 'ssh',
+    });
 
     await context.resolveCube('cube-b', 'host1');
 
@@ -102,14 +112,16 @@ describe('BuildContext.resolveCube', () => {
     const cubeA = createTestCube('cube-a');
     const cubeB = createTestCube('cube-b', () => ['cube-a']);
     const cubeC = createTestCube('cube-c', () => ['cube-a', 'cube-b']);
-    
+
     const cubes = { 'cube-a': cubeA, 'cube-b': cubeB, 'cube-c': cubeC };
     const vars = new Variables();
-    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, { method: 'ssh' });
+    const context = new BuildContext(cubes, vars, { cubes: [] } as any, { env: {} } as any, {
+      method: 'ssh',
+    });
 
     await context.resolveCube('cube-c', 'host1');
 
     // Execution order: cube-a, cube-b, cube-c
-    expect(context.deployCalls.map(c => c.cube)).toEqual(['cube-a', 'cube-b', 'cube-c']);
+    expect(context.deployCalls.map((c) => c.cube)).toEqual(['cube-a', 'cube-b', 'cube-c']);
   });
 });

@@ -1,29 +1,67 @@
 {
   "name": "@bitstack/keyman",
-  "description": "A system to simplify ssh key management",
-  "type": "module",
   "version": "1.0.0",
-  "private": true,
+  "description": "A system to simplify ssh key management",
+  "keywords": [
+    "ssh",
+    "keys",
+    "age",
+    "encryption",
+    "cli"
+  ],
+  "license": "MIT",
   "author": "bitsquare",
-  "bin": "dist/keyman.cli.js",
-  "scripts": {
-    "clean": "rm -rf dist",
-    "build": "tsgo && chmod +x dist/keyman.cli.js && npm link",
-    "build:legacy": "tsc && chmod +x dist/keyman.cli.js && npm link",
-    "prepublishOnly": "npm run build",
-    "keyman": "node --loader ts-node/esm src/keyman.bin.ts"
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitea.bitsquare.dev/BitSquare/ansiblings.git",
+    "directory": "packages/keyman"
+  },
+  "homepage": "https://gitea.bitsquare.dev/BitSquare/ansiblings/src/branch/main/packages/keyman",
+  "bugs": {
+    "url": "https://gitea.bitsquare.dev/BitSquare/ansiblings/issues"
   },
   "engines": {
-    "node": ">=21.0.0"
+    "node": ">=22"
   },
-  "files": ["dist/"],
+  "bin": {
+    "keyman": "./dist/keyman.cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist .tsbuildinfo",
+    "build": "tsc",
+    "prepack": "pnpm run build",
+    "link:local": "pnpm run build && npm link",
+    "keyman": "tsx src/keyman.cli.ts",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest"
+  },
   "dependencies": {
-    "execa": "9.5.2",
-    "inquirer": "8.2.4",
-    "ts-node": ">=10.9.1",
-    "typed-dotenv": "10.0.2",
-    "typescript": ">=5.6.3",
-    "zod": "^3.24.1",
-    "zx": "^8.3.0"
+    "execa": "^10.0.0",
+    "inquirer": "^14.0.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

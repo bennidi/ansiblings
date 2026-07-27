@@ -7,7 +7,7 @@ import { getLogger } from '@logtape/logtape';
 import type { Cube } from './cubes/index.js';
 import type { NopyConfig } from './nopy.config.js';
 import { AuthSelection, CubeSelection, HostSelection, PasswordSelection } from './nopy.prompts.js';
-import { type AuthSession, type NopySession, createSession, loadSession } from './nopy.session.js';
+import { type AuthSession, createSession, loadSession, type NopySession } from './nopy.session.js';
 
 const log = getLogger(['nopy', 'workflow']);
 

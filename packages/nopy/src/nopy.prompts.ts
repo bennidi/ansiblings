@@ -3,23 +3,31 @@
  * @module nopy.prompts
  */
 
-// @ts-ignore - no types available
 import Enquirer from 'enquirer';
 import fuzzy from 'fuzzy';
 import inquirer from 'inquirer';
-// @ts-ignore - no types available
-import CheckboxPlus from 'inquirer-checkbox-plus-prompt';
 import { z } from 'zod';
-import type { Cube } from './cubes/index.js';
+import type { AnyObjectSchema, Cube } from './cubes/index.js';
 import type { Variables } from './nopy.common.js';
 
-// Register the checkbox-plus prompt type for filterable multi-select
-inquirer.registerPrompt('checkbox-plus', CheckboxPlus);
-
 interface CubeChoice {
+  /** Submitted value — enquirer returns the `name` of each selected choice. */
   name: string;
-  value: string;
-  short: string;
+  /** Label rendered in the list. */
+  message: string;
+}
+
+/**
+ * Fuzzy-filters the cube list against what the user has typed so far.
+ *
+ * Handed to enquirer as `suggest`, which calls it on every keystroke with the
+ * current input and the full choice list.
+ */
+function suggestCubes(input: string | undefined, choices: CubeChoice[]): CubeChoice[] {
+  if (!input) return choices;
+  return fuzzy
+    .filter(input, choices, { extract: (choice: CubeChoice) => choice.message })
+    .map((result) => result.original);
 }
 
 /**
@@ -31,9 +39,8 @@ export async function CubeSelection(
   const cubeChoices: CubeChoice[] = Object.values(cubes)
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((cube) => ({
-      name: `${cube.id} - ${cube.name}`,
-      value: cube.id,
-      short: cube.id,
+      name: cube.id,
+      message: `${cube.id} - ${cube.name}`,
     }));
 
   // Clear terminal and move cursor to top
@@ -45,26 +52,21 @@ export async function CubeSelection(
   console.log('\n  Cube Selection\n');
   console.log('  Type to filter • Space to select • Enter to confirm\n');
 
-  const answers = await inquirer.prompt([
-    {
-      type: 'checkbox-plus',
-      name: 'selectedCubes',
-      message: 'Select cubes:',
-      pageSize,
-      highlight: true,
-      searchable: true,
-      source: (_answersSoFar: unknown, input: string | undefined) => {
-        const searchTerm = input || '';
-        if (!searchTerm) return Promise.resolve(cubeChoices);
-        const results = fuzzy.filter(searchTerm, cubeChoices, {
-          extract: (choice: CubeChoice) => choice.name,
-        });
-        return Promise.resolve(results.map((r) => r.original));
-      },
-    },
-  ]);
+  const prompt = new (Enquirer as any).AutoComplete({
+    name: 'selectedCubes',
+    message: 'Select cubes:',
+    limit: pageSize,
+    multiple: true,
+    choices: cubeChoices,
+    suggest: suggestCubes,
+  });
 
-  return { selectedCubes: answers.selectedCubes };
+  try {
+    return { selectedCubes: await prompt.run() };
+  } catch {
+    // User cancelled
+    return { selectedCubes: [] };
+  }
 }
 
 export async function AuthSelection(useAuthKey?: boolean): Promise<{
@@ -140,7 +142,7 @@ export async function HostSelection(hosts: string[]): Promise<string> {
   return selectedHost.customHost ?? selectedHost.host;
 }
 
-function coerceValue(value: unknown, zodType: z.ZodTypeAny): unknown {
+function coerceValue(value: unknown, zodType: z.core.$ZodType): unknown {
   if (typeof value !== 'string') return value;
   if (zodType instanceof z.ZodDefault) return coerceValue(value, zodType._def.innerType);
   if (zodType instanceof z.ZodOptional) return coerceValue(value, zodType._def.innerType);
@@ -162,14 +164,14 @@ interface FormChoice {
   initial: string;
 }
 
-export async function VariableAssignment<S extends z.AnyZodObject>(
+export async function VariableAssignment<S extends AnyObjectSchema>(
   cube: Cube<S>,
   variables: Variables
 ) {
   const schema = cube.manifest.schema.shape;
   const defaults = cube.getDefaults();
   const variablesToConfigure: Record<string, unknown> = {};
-  
+
   for (const [key, defaultValue] of Object.entries(defaults)) {
     if (variables.get(cube.id, 'params')[key] === undefined) {
       variablesToConfigure[key] = defaultValue;

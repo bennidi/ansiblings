@@ -1,0 +1,124 @@
+# Every commit that lands on `main` publishes a prerelease of both packages to
+# the Gitea npm registry under the `main` dist-tag:
+#
+#   pnpm add @bitstack/nopy@main
+#
+# The verification gate runs here rather than in ci.yml so a snapshot can never
+# be published from a red `main`. Versions are derived, never committed —
+# releases to npmjs are cut by hand via a tag (see release.yml).
+
+name: Publish snapshot
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: snapshot-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+
+    env:
+      # e.g. https://gitea.example.com/api/packages/BitSquare/npm/
+      REGISTRY: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}/npm/
+      # GITEA_TOKEN is injected automatically; override with a PAT that carries
+      # `write:package` if the automatic token is not scoped for the registry.
+      REGISTRY_TOKEN: ${{ secrets.GITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}
+      NPMRC: ${{ github.workspace }}/.npmrc-gitea
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        # Version comes from `packageManager` in the root package.json.
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Locate the pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pnpm store
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint:ci
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test with coverage
+        run: pnpm run test:coverage
+
+      - name: Summarise coverage
+        # Reporting only — the gate is the step above.
+        if: always()
+        continue-on-error: true
+        run: pnpm run coverage:summary
+
+      - name: Build
+        # Explicit, so the publish step can skip lifecycle scripts entirely.
+        run: pnpm run build
+
+      - name: Authenticate against the Gitea registry
+        run: |
+          set -euo pipefail
+          if [ -z "${REGISTRY_TOKEN}" ]; then
+            echo "::error::No registry token. Add a GITEA_NPM_TOKEN secret with write:package scope."
+            exit 1
+          fi
+          install -m 600 /dev/null "$NPMRC"
+          {
+            printf '@bitstack:registry=%s\n' "$REGISTRY"
+            printf '//%s:_authToken=%s\n' "${REGISTRY#*://}" "$REGISTRY_TOKEN"
+          } >> "$NPMRC"
+
+      - name: Publish snapshots
+        run: |
+          set -euo pipefail
+          export npm_config_userconfig="$NPMRC"
+          : "${GITHUB_STEP_SUMMARY:=/dev/null}"
+          short_sha=$(git rev-parse --short=7 HEAD)
+
+          for dir in packages/*/; do
+            name=$(node -p "require('./${dir}package.json').name")
+            base=$(node -p "require('./${dir}package.json').version")
+            # `g` prefix keeps the identifier a valid semver one even when the
+            # abbreviated sha happens to be all digits.
+            version="${base}-main.${{ github.run_number }}.g${short_sha}"
+
+            echo "::group::${name}@${version}"
+            if npm view "${name}@${version}" version --registry "$REGISTRY" >/dev/null 2>&1; then
+              echo "Already published — skipping (this is a re-run of the same workflow)."
+            else
+              (
+                cd "$dir"
+                npm pkg set "version=${version}"
+                npm publish --ignore-scripts --tag main --registry "$REGISTRY"
+              )
+            fi
+            echo "::endgroup::"
+
+            echo "- \`pnpm add ${name}@${version}\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Remove the registry credentials
+        if: always()
+        run: rm -f "$NPMRC"

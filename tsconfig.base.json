@@ -16,10 +16,5 @@
       "@bitstack/keyman": ["./packages/keyman/src"]
     }
   },
-  "ts-node": {
-    "experimentalSpecifierResolution": "node",
-    "transpileOnly": true,
-    "esm": true
-  },
   "exclude": ["coverage", "node_modules", "dist"]
 }

@@ -3,7 +3,7 @@
  * @module cubes/factories
  */
 
-import { Manifest } from './types.js';
+import { type AnyObjectSchema, Manifest } from './types.js';
 
 /**
  * Creates a manifest configuration for a cube
@@ -11,7 +11,7 @@ import { Manifest } from './types.js';
  * @param opts - Manifest options including name, schema, dependencies, and hooks
  * @returns Manifest configuration object
  */
-export function createManifest<Schema extends import('zod').z.AnyZodObject>(
+export function createManifest<Schema extends AnyObjectSchema>(
   opts: Pick<Manifest<Schema>, 'name'> & Partial<Omit<Manifest<Schema>, 'name'>>
 ): Manifest<Schema> {
   return Manifest(opts);

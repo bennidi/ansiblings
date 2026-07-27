@@ -7,11 +7,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  type NopySession,
   createSession,
   filterInternalVariables,
   listSessions,
   loadSession,
+  type NopySession,
   saveSession,
   separateEnvAndCubeVariables,
 } from '../src/nopy.session.js';

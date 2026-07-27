@@ -80,7 +80,7 @@ export async function loadCubes(): Promise<LoadResult> {
           errors.push(`Invalid manifest format in ${manifestPath}: missing 'name'`);
         } else {
           const cubeId = extractCubeId(manifest) || path.basename(cubePath);
-          
+
           if (cubes[cubeId]) {
             errors.push(`Duplicate cube id '${cubeId}'`);
             return;

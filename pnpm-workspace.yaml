@@ -1,6 +1,13 @@
 packages:
   - 'packages/*'
-  - 'projects/*'
-onlyBuiltDependencies:
-  - "@biomejs/biome"
-  - "esbuild"
+
+overrides:
+  '@types/node': '^26.1.1'
+  '@logtape/logtape': '^2.2.4'
+  'typescript': '^7.0.2'
+  'commander': '^15.0.0'
+
+allowBuilds:
+  '@biomejs/biome': true
+  esbuild: true
+  simple-git-hooks: true

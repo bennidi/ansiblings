@@ -5,6 +5,7 @@
  * @module nopy.cli
  */
 
+import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { loadConfig } from './nopy.config.js';
 import {
@@ -16,12 +17,13 @@ import {
 } from './nopy.history.js';
 import { nopy } from './nopy.main.js';
 
+const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
+
 const program = new Command();
-const config = loadConfig();
 
 program
   .name('nopy')
-  .version('1.0.0')
+  .version(version)
   .description('A CLI tool for pyinfra script management and execution.')
   .addHelpText(
     'after',
@@ -61,8 +63,8 @@ program
   .option('-j, --json', 'Output results as JSON')
   .option('--no-history', 'Do not save this session to history')
   .action(async (options) => {
-    // Apply config defaults
-    const execConfig = config.execution ?? {};
+    // Loaded lazily so that --help/--version work outside a configured project.
+    const execConfig = loadConfig().execution ?? {};
     const continueOnError = options.continueOnError ?? execConfig.continueOnError ?? false;
 
     try {

@@ -7,7 +7,11 @@ export default cubes.Manifest({
   dependencies: () => [],
   schema: z.object({
     APP: z.string().describe('The name of the systemd service (e.g., flintstone)'),
-    SERVICE_NAME: z.string().optional().describe('Display name for the service').default('Application'),
+    SERVICE_NAME: z
+      .string()
+      .optional()
+      .describe('Display name for the service')
+      .default('Application'),
     AUTOSTART: z.boolean().describe('Should the service be enabled and started?').default(true),
   }),
 });

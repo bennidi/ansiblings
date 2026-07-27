@@ -7,6 +7,9 @@ export default cubes.Manifest({
   dependencies: () => [],
   schema: z.object({
     UPDATE: z.boolean().describe('Update package cache before installing').default(false),
-    PACKAGES: z.string().describe('Space-separated list of packages to install').default('vim htop curl'),
+    PACKAGES: z
+      .string()
+      .describe('Space-separated list of packages to install')
+      .default('vim htop curl'),
   }),
 });

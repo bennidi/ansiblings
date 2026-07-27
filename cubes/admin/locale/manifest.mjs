@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import { cubes } from '@bitstack/nopy';
+import { z } from 'zod';
 
 export default cubes.Manifest({
   id: 'admin:locale',

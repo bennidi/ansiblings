@@ -3,13 +3,13 @@
  * @module nopy.main
  */
 
-import { type LogRecord, configure, getAnsiColorFormatter, getLogger } from '@logtape/logtape';
-import { loadCubes } from './cubes/index.js';
+import { configure, getAnsiColorFormatter, getLogger, type LogRecord } from '@logtape/logtape';
 import { BuildContext } from './cubes/dependencies.js';
+import { loadCubes } from './cubes/index.js';
 import { Variables } from './nopy.common.js';
 import { getConfigPaths, loadConfig } from './nopy.config.js';
 import { type ExecutionResult, executeDeployCalls, summarizeResults } from './nopy.executor.js';
-import { DEFAULT_HISTORY_SIZE, addToHistory } from './nopy.history.js';
+import { addToHistory, DEFAULT_HISTORY_SIZE } from './nopy.history.js';
 import { type NopySession, saveSession } from './nopy.session.js';
 import { runWorkflow } from './nopy.workflow.js';
 
@@ -34,12 +34,12 @@ function configureLogtape(): void {
     loggers: [
       {
         category: ['logtape', 'meta'],
-        level: 'error',
+        lowestLevel: 'error',
         sinks: ['console'],
       },
       {
         category: 'nopy',
-        level: 'debug',
+        lowestLevel: 'debug',
         sinks: ['console'],
       },
     ],
@@ -52,7 +52,10 @@ configureLogtape();
 /**
  * Prints the active configuration summary
  */
-function printActiveConfig(config: import('./nopy.config.js').NopyConfig, opts: { continueOnError: boolean }): void {
+function printActiveConfig(
+  config: import('./nopy.config.js').NopyConfig,
+  opts: { continueOnError: boolean }
+): void {
   const configPaths = getConfigPaths();
   const cwd = process.cwd();
 
@@ -143,12 +146,18 @@ export async function nopy(opts: NopyOptions = {}): Promise<NopyResult | undefin
 
   if (errors.length > 0) {
     log.error('Errors found during cube loading:');
-    errors.forEach((error) => log.error(error));
+    for (const error of errors) log.error(error);
     if (jsonOutput) console.log(JSON.stringify({ success: false, errors }, null, 2));
     return undefined;
   }
 
-  const workflow = await runWorkflow(loadSessionPath, cubes, config, { useDefaults, useAuthKey }, replaySession);
+  const workflow = await runWorkflow(
+    loadSessionPath,
+    cubes,
+    config,
+    { useDefaults, useAuthKey },
+    replaySession
+  );
 
   // Step 3: Build deployment calls using BuildContext
   const context = new BuildContext(

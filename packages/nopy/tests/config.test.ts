@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { type LogConfig, logConfigToFlags } from '../src/nopy.config.js';
+import { logConfigToFlags } from '../src/nopy.config.js';
 
 describe('logConfigToFlags', () => {
   it('returns empty array for silent verbosity', () => {

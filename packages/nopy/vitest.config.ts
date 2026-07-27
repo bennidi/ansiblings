@@ -8,9 +8,23 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json-summary', 'html'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/nopy.cli.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        // Pure re-export barrels: no logic to cover.
+        'src/index.ts',
+        'src/cubes/index.ts',
+        'src/nopy.cubes.ts',
+        // Commander wiring only; behaviour lives in the modules it calls.
+        'src/nopy.cli.ts',
+      ],
+      thresholds: {
+        branches: 85,
+        functions: 85,
+        lines: 80,
+        statements: 80,
+      },
     },
   },
 });

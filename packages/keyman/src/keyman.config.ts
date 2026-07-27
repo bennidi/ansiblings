@@ -232,7 +232,7 @@ export function loadConfig(): KeymanConfig {
   } catch (error) {
     if (error instanceof z.ZodError) {
       console.error('❌ ERROR: Invalid merged configuration:');
-      error.errors.forEach((err) => {
+      error.issues.forEach((err) => {
         console.error(`  - ${err.path.join('.')}: ${err.message}`);
       });
     }

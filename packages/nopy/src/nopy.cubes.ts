@@ -20,10 +20,10 @@ export const cubes = {
 
 // Re-export types for direct access
 export type {
+  Cube,
+  CubeVariables,
   Hook,
   HookContext,
-  Cube,
-  Manifest,
   LoadResult,
-  CubeVariables,
+  Manifest,
 } from './cubes/index.js';

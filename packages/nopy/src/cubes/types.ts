@@ -6,6 +6,13 @@
 import { z } from 'zod';
 
 /**
+ * Any object schema, whatever its shape.
+ *
+ * Stands in for zod 3's `z.AnyZodObject`, which zod 4 removed.
+ */
+export type AnyObjectSchema = z.ZodObject<Record<string, z.ZodType<any>>>;
+
+/**
  * Variables that can be passed to a cube
  */
 export type CubeVariables = Record<string, string | number | boolean>;
@@ -25,7 +32,7 @@ export interface HookContext {
 /**
  * Hook function type for before/after cube execution
  */
-export type Hook<Schema extends z.AnyZodObject = z.AnyZodObject> = (
+export type Hook<Schema extends AnyObjectSchema = AnyObjectSchema> = (
   ctx: HookContext,
   variables: z.infer<Schema>
 ) => void | Promise<void>;
@@ -33,7 +40,7 @@ export type Hook<Schema extends z.AnyZodObject = z.AnyZodObject> = (
 /**
  * User-defined specification for a cube
  */
-export interface Manifest<Schema extends z.AnyZodObject = z.AnyZodObject> {
+export interface Manifest<Schema extends AnyObjectSchema = AnyObjectSchema> {
   /** Unique identifier for the cube (used for dependency references) */
   id: string;
   /** Human-readable name of the cube */
@@ -51,7 +58,7 @@ export interface Manifest<Schema extends z.AnyZodObject = z.AnyZodObject> {
 /**
  * Factory function and namespace for Manifest
  */
-export function Manifest<Schema extends z.AnyZodObject>(
+export function Manifest<Schema extends AnyObjectSchema>(
   opts: Pick<Manifest<Schema>, 'name'> & Partial<Omit<Manifest<Schema>, 'name'>>
 ): Manifest<Schema> {
   return {
@@ -68,7 +75,7 @@ export namespace Manifest {
   /**
    * Internal create helper
    */
-  export function create<Schema extends z.AnyZodObject>(
+  export function create<Schema extends AnyObjectSchema>(
     opts: Pick<Manifest<Schema>, 'name'> & Partial<Omit<Manifest<Schema>, 'name'>>
   ): Manifest<Schema> {
     return Manifest(opts);
@@ -78,7 +85,7 @@ export namespace Manifest {
 /**
  * A fully loaded cube with its filesystem location and runtime state
  */
-export class Cube<Schema extends z.AnyZodObject = z.AnyZodObject> {
+export class Cube<Schema extends AnyObjectSchema = AnyObjectSchema> {
   constructor(
     public readonly manifest: Manifest<Schema>,
     public readonly dir: string,

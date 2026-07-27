@@ -99,7 +99,7 @@ describe('loadCubes (Integration)', () => {
     await fs.mkdirp('only-deploy');
     await fs.writeFile('only-deploy/deploy.py', '# deploy');
 
-    const { cubes, errors } = await loadCubes();
+    const { cubes } = await loadCubes();
 
     expect(Object.keys(cubes)).not.toContain('only-manifest');
     expect(Object.keys(cubes)).not.toContain('only-deploy');

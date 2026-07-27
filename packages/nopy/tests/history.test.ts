@@ -7,17 +7,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  HISTORY_FILE,
-  type HistoryEntry,
-  type SessionHistory,
   addToHistory,
   clearHistory,
   formatHistoryList,
   getLastSession,
   getSessionById,
+  HISTORY_FILE,
+  type HistoryEntry,
   listHistory,
   loadHistory,
   removeFromHistory,
+  type SessionHistory,
   saveHistory,
 } from '../src/nopy.history.js';
 import type { NopySession } from '../src/nopy.session.js';

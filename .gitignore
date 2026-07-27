@@ -7,9 +7,18 @@ cache
 vault/tmp
 age.key
 
+dist
+coverage
 tsconfig.tsbuildinfo
+*.tsbuildinfo
 *.log
 .nopy.history.json
 
 *.img
 *.img.gz
+
+# Registry credentials and payloads written into the workspace by the publish
+# workflows — never wanted in a commit.
+.npmrc
+.npmrc-*
+release.json

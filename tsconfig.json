@@ -1,8 +1,5 @@
 {
   "extends": "./tsconfig.base.json",
   "files": [],
-  "references": [
-    { "path": "./packages/nopy" },
-    { "path": "./packages/keyman" }
-  ]
+  "references": [{ "path": "./packages/nopy" }, { "path": "./packages/keyman" }]
 }

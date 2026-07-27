@@ -1,0 +1,243 @@
+# Tag-driven release of a single package.
+#
+#   git tag nopy-v1.2.0 && git push origin nopy-v1.2.0
+#   git tag keyman-v1.2.0 && git push origin keyman-v1.2.0
+#
+# The tag is the source of truth for *which* package ships; package.json is the
+# source of truth for the version, and the two must agree or the run fails.
+# A version with a prerelease part (1.2.0-rc.1) publishes under `next` instead
+# of `latest`.
+#
+# Required secrets:
+#   NPM_TOKEN        npmjs automation token with publish rights on @bitstack
+#   GITEA_NPM_TOKEN  optional; PAT with write:package if GITEA_TOKEN is not enough
+
+name: Release
+
+on:
+  push:
+    tags:
+      - '*-v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    env:
+      GITEA_REGISTRY: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}/npm/
+      GITEA_REGISTRY_TOKEN: ${{ secrets.GITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}
+      NPMJS_REGISTRY: https://registry.npmjs.org/
+      NPMJS_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPMRC: ${{ github.workspace }}/.npmrc-release
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Resolve the release from the tag
+        id: target
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          pkg="${tag%-v*}"
+          version="${tag##*-v}"
+          dir="packages/${pkg}"
+
+          if [ ! -f "${dir}/package.json" ]; then
+            echo "::error::Tag '${tag}' names package '${pkg}', but ${dir}/package.json does not exist."
+            exit 1
+          fi
+
+          declared=$(node -p "require('./${dir}/package.json').version")
+          if [ "$declared" != "$version" ]; then
+            echo "::error::Tag '${tag}' asks for ${version}, but ${dir}/package.json declares ${declared}. Bump the manifest and re-tag."
+            exit 1
+          fi
+
+          name=$(node -p "require('./${dir}/package.json').name")
+          case "$version" in
+            *-*) dist_tag=next ;;
+            *)   dist_tag=latest ;;
+          esac
+
+          {
+            echo "tag=${tag}"
+            echo "dir=${dir}"
+            echo "name=${name}"
+            echo "version=${version}"
+            echo "dist_tag=${dist_tag}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Releasing ${name}@${version} from ${dir} as '${dist_tag}'."
+
+      - name: Check the required secrets are present
+        run: |
+          set -euo pipefail
+          missing=0
+          [ -n "${NPMJS_TOKEN}" ] || { echo "::error::NPM_TOKEN secret is not set."; missing=1; }
+          [ -n "${GITEA_REGISTRY_TOKEN}" ] || { echo "::error::No Gitea registry token available."; missing=1; }
+          exit "$missing"
+
+      - name: Set up pnpm
+        # Version comes from `packageManager` in the root package.json.
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Locate the pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pnpm store
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint:ci
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test with coverage
+        run: pnpm run test:coverage
+
+      - name: Build
+        # Explicit, so the publish steps can skip lifecycle scripts entirely.
+        run: pnpm run build
+
+      - name: Publish to the Gitea registry
+        env:
+          NAME: ${{ steps.target.outputs.name }}
+          VERSION: ${{ steps.target.outputs.version }}
+          DIST_TAG: ${{ steps.target.outputs.dist_tag }}
+          DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null "$NPMRC"
+          {
+            printf '@bitstack:registry=%s\n' "$GITEA_REGISTRY"
+            printf '//%s:_authToken=%s\n' "${GITEA_REGISTRY#*://}" "$GITEA_REGISTRY_TOKEN"
+          } >> "$NPMRC"
+          export npm_config_userconfig="$NPMRC"
+
+          if npm view "${NAME}@${VERSION}" version --registry "$GITEA_REGISTRY" >/dev/null 2>&1; then
+            echo "${NAME}@${VERSION} is already on Gitea — skipping."
+          else
+            (cd "$DIR" && npm publish --ignore-scripts --tag "$DIST_TAG" --registry "$GITEA_REGISTRY")
+          fi
+
+      - name: Publish to npmjs
+        env:
+          NAME: ${{ steps.target.outputs.name }}
+          VERSION: ${{ steps.target.outputs.version }}
+          DIST_TAG: ${{ steps.target.outputs.dist_tag }}
+          DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null "$NPMRC"
+          {
+            printf '@bitstack:registry=%s\n' "$NPMJS_REGISTRY"
+            printf '//%s:_authToken=%s\n' "${NPMJS_REGISTRY#*://}" "$NPMJS_TOKEN"
+          } >> "$NPMRC"
+          export npm_config_userconfig="$NPMRC"
+
+          if npm view "${NAME}@${VERSION}" version --registry "$NPMJS_REGISTRY" >/dev/null 2>&1; then
+            echo "${NAME}@${VERSION} is already on npmjs — skipping."
+          else
+            # No --provenance: that needs GitHub Actions OIDC, which Gitea has no
+            # equivalent for.
+            (cd "$DIR" && npm publish --ignore-scripts --tag "$DIST_TAG" --access public --registry "$NPMJS_REGISTRY")
+          fi
+
+      - name: Remove the registry credentials
+        if: always()
+        run: rm -f "$NPMRC"
+
+      - name: Create the Gitea release
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          TAG: ${{ steps.target.outputs.tag }}
+          NAME: ${{ steps.target.outputs.name }}
+          VERSION: ${{ steps.target.outputs.version }}
+          DIST_TAG: ${{ steps.target.outputs.dist_tag }}
+          DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          set -euo pipefail
+          api="${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/releases"
+
+          status=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: token ${GITEA_TOKEN}" "${api}/tags/${TAG}")
+          if [ "$status" = "200" ]; then
+            echo "A release for ${TAG} already exists — leaving it alone."
+            exit 0
+          fi
+
+          # The section of the hand-written changelog that names this version.
+          notes=""
+          if [ -f "${DIR}/CHANGELOG.md" ]; then
+            notes=$(awk -v v="$VERSION" '
+              /^## / { if (found) exit; if (index($0, v)) { found = 1; next } }
+              found  { print }
+            ' "${DIR}/CHANGELOG.md")
+          fi
+          export NOTES="$notes"
+
+          node -e '
+            const { NAME, VERSION, TAG, DIST_TAG, NOTES } = process.env;
+            const install =
+              DIST_TAG === "latest"
+                ? `npm install -g ${NAME}`
+                : `npm install -g ${NAME}@${VERSION}`;
+            const body = [
+              NOTES.trim(),
+              "",
+              "```sh",
+              install,
+              "```",
+            ].join("\n").trim();
+            console.log(JSON.stringify({
+              tag_name: TAG,
+              name: `${NAME} v${VERSION}`,
+              body,
+              draft: false,
+              prerelease: DIST_TAG !== "latest",
+            }));
+          ' > release.json
+
+          curl -sS -f -X POST \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary @release.json \
+            "$api"
+          rm -f release.json
+
+      - name: Summarise
+        # Reporting only; never the reason a green release goes red.
+        continue-on-error: true
+        env:
+          NAME: ${{ steps.target.outputs.name }}
+          VERSION: ${{ steps.target.outputs.version }}
+          DIST_TAG: ${{ steps.target.outputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          : "${GITHUB_STEP_SUMMARY:=/dev/null}"
+          {
+            echo "### Released \`${NAME}@${VERSION}\` (\`${DIST_TAG}\`)"
+            echo ""
+            echo "- npmjs: \`npm install -g ${NAME}@${VERSION}\`"
+            echo "- Gitea: \`npm install -g ${NAME}@${VERSION} --registry ${GITEA_REGISTRY}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

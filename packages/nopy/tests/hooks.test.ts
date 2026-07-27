@@ -24,24 +24,28 @@ describe('Cube Hooks', () => {
 
     const cubes: Record<string, Cube> = {
       main: createMockCube('main', 'Main Cube', {
-        before: [async ({ exec }) => {
-          order.push('main:before');
-          await exec('before-hook', {});
-        }],
-        after: [async ({ exec }) => {
-          order.push('main:after');
-          await exec('after-hook', {});
-        }],
+        before: [
+          async ({ exec }) => {
+            order.push('main:before');
+            await exec('before-hook', {});
+          },
+        ],
+        after: [
+          async ({ exec }) => {
+            order.push('main:after');
+            await exec('after-hook', {});
+          },
+        ],
         dependencies: () => ['dep'],
       }),
       'before-hook': createMockCube('before-hook', 'Before Hook'),
       'after-hook': createMockCube('after-hook', 'After Hook'),
-      'dep': createMockCube('dep', 'Dependency'),
+      dep: createMockCube('dep', 'Dependency'),
     };
 
     // Note: buildDeployCall also records the main cube execution
     // We can't easily spy on buildDeployCall, but we can see the resulting deployCalls order
-    
+
     const vars = new Variables();
     const context = new BuildContext(
       cubes,
@@ -53,7 +57,7 @@ describe('Cube Hooks', () => {
 
     await context.resolveCube('main', 'host1');
 
-    const callOrder = context.deployCalls.map(c => c.cube);
+    const callOrder = context.deployCalls.map((c) => c.cube);
 
     // Expected order:
     // 1. main:before (hook runs)

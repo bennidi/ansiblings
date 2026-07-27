@@ -6,37 +6,32 @@
  * @module cubes
  */
 
-// Types
-export {
-  Cube,
-  Manifest,
-} from './types.js';
-
-export type {
-  Hook,
-  HookContext,
-  LoadResult,
-  CubeVariables,
-  DependencySpec,
-} from './types.js';
-
+// Dependencies
+export { BuildContext } from './dependencies.js';
 // Factory functions
 export {
   createManifest,
   manifest,
 } from './factories.js';
-
 // Loader
 export {
-  loadCubes,
   findCubeDirectories,
   getCube,
+  loadCubes,
 } from './loader.js';
-
-// Dependencies
+export type {
+  AnyObjectSchema,
+  CubeVariables,
+  DependencySpec,
+  Hook,
+  HookContext,
+  LoadResult,
+} from './types.js';
+// Types
 export {
-  BuildContext,
-} from './dependencies.js';
+  Cube,
+  Manifest,
+} from './types.js';
 
 // Utilities
 export { uniqid } from './utils.js';

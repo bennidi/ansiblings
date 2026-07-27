@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execa } from 'execa';
 import inquirer from 'inquirer';
 import { loadConfig, resolveConfigPaths } from './keyman.config.js';
 import { copyKey } from './keyman.copy.js';
