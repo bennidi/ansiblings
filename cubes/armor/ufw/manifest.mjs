@@ -1,4 +1,4 @@
-import { cubes } from '@bitstack/nopy';
+import { cubes } from '@bitsquare/nopy';
 import { z } from 'zod';
 
 export default cubes.Manifest({

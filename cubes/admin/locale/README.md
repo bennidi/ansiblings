@@ -12,7 +12,7 @@ Configures system keyboard layout permanently by updating `/etc/default/keyboard
 ## Usage
 
 ```javascript
-import { cubes } from '@bitstack/nopy';
+import { cubes } from '@bitsquare/nopy';
 
 export default cubes.Manifest({
   name: 'My Host Setup',

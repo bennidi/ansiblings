@@ -1,5 +1,5 @@
 {
-  "name": "@bitstack/keyman",
+  "name": "@bitsquare/keyman",
   "version": "1.0.0",
   "description": "A system to simplify ssh key management",
   "keywords": [

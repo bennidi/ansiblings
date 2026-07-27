@@ -5,12 +5,12 @@ they deploy.
 
 | Path              | Package            | Binary   | What it is                                          |
 | ----------------- | ------------------ | -------- | --------------------------------------------------- |
-| `packages/nopy`   | `@bitstack/nopy`   | `nopy`   | interactive pyinfra script management and execution |
-| `packages/keyman` | `@bitstack/keyman` | `keyman` | SSH key management with `age` encryption            |
+| `packages/nopy`   | `@bitsquare/nopy`   | `nopy`   | interactive pyinfra script management and execution |
+| `packages/keyman` | `@bitsquare/keyman` | `keyman` | SSH key management with `age` encryption            |
 | `cubes/`          | —                  | —        | the deployment units `nopy` runs                    |
 
 ```sh
-npm install -g @bitstack/nopy @bitstack/keyman
+npm install -g @bitsquare/nopy @bitsquare/keyman
 ```
 
 See each package's README for usage, and
@@ -37,7 +37,7 @@ pnpm install
 
 `typescript` is on the 7.x native compiler, so `tsc` *is* the fast one — there is
 no separate `tsgo` binary to keep in sync. Each package also has a dev-run script
-(`pnpm --filter @bitstack/nopy run nopy`) that executes the TypeScript sources
+(`pnpm --filter @bitsquare/nopy run nopy`) that executes the TypeScript sources
 directly through `tsx`.
 
 ## Git hooks

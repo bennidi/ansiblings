@@ -1,4 +1,4 @@
-import { cubes, uniqid } from '@bitstack/nopy';
+import { cubes, uniqid } from '@bitsquare/nopy';
 import { z } from 'zod';
 
 /**

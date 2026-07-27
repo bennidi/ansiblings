@@ -12,8 +12,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "paths": {
-      "@bitstack/nopy": ["./packages/nopy/src"],
-      "@bitstack/keyman": ["./packages/keyman/src"]
+      "@bitsquare/nopy": ["./packages/nopy/src"],
+      "@bitsquare/keyman": ["./packages/keyman/src"]
     }
   },
   "exclude": ["coverage", "node_modules", "dist"]

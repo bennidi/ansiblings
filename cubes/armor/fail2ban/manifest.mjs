@@ -1,4 +1,4 @@
-import { cubes } from '@bitstack/nopy';
+import { cubes } from '@bitsquare/nopy';
 
 export default cubes.Manifest({
   id: 'armor:fail2ban',

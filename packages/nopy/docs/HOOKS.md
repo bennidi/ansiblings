@@ -15,7 +15,7 @@ Hooks are defined as an array of functions in the cube manifest.
 
 ```javascript
 import { z } from 'zod';
-import { cubes } from '@bitstack/nopy';
+import { cubes } from '@bitsquare/nopy';
 
 export default cubes.Manifest({
   name: 'my-cube',

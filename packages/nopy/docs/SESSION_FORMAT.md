@@ -252,7 +252,7 @@ generateSession({
 Both formats are loaded the same way:
 
 ```javascript
-import { loadSession } from '@bitstack/nopy';
+import { loadSession } from '@bitsquare/nopy';
 
 // Load JSON
 const jsonSession = await loadSession('./my-session.session.json');

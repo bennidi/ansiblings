@@ -9,7 +9,7 @@
 # of `latest`.
 #
 # Required secrets:
-#   NPM_TOKEN        npmjs granular token, read-and-write on @bitstack/*, 2FA
+#   NPM_TOKEN        npmjs granular token, read-and-write on @bitsquare/*, 2FA
 #                    not required. Expires after 90 days — rotate it.
 #   MYGITEA_NPM_TOKEN  Gitea PAT with write:package. The automatic GITEA_TOKEN is
 #                    a repo-scoped task token and the package registry rejects it.
@@ -131,7 +131,7 @@ jobs:
           set -euo pipefail
           install -m 600 /dev/null "$NPMRC"
           {
-            printf '@bitstack:registry=%s\n' "$GITEA_REGISTRY"
+            printf '@bitsquare:registry=%s\n' "$GITEA_REGISTRY"
             printf '//%s:_authToken=%s\n' "${GITEA_REGISTRY#*://}" "$GITEA_REGISTRY_TOKEN"
           } >> "$NPMRC"
           export npm_config_userconfig="$NPMRC"
@@ -152,7 +152,7 @@ jobs:
           set -euo pipefail
           install -m 600 /dev/null "$NPMRC"
           {
-            printf '@bitstack:registry=%s\n' "$NPMJS_REGISTRY"
+            printf '@bitsquare:registry=%s\n' "$NPMJS_REGISTRY"
             printf '//%s:_authToken=%s\n' "${NPMJS_REGISTRY#*://}" "$NPMJS_TOKEN"
           } >> "$NPMRC"
           export npm_config_userconfig="$NPMRC"

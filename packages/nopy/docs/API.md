@@ -24,7 +24,7 @@ This document describes the public API for the nopy package.
 Main entry point for nopy deployments.
 
 ```typescript
-import { nopy } from '@bitstack/nopy';
+import { nopy } from '@bitsquare/nopy';
 
 const result = await nopy({
   useDefaults: false,
@@ -608,7 +608,7 @@ cubes/
 
 ```javascript
 // my-cube.manifest.mjs
-import { createManifest } from '@bitstack/nopy';
+import { createManifest } from '@bitsquare/nopy';
 import { z } from 'zod';
 
 export default createManifest({

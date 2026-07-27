@@ -23,8 +23,8 @@ shipped. If you only want to cut a release, jump to
 
 | Directory         | Package            | Binary   |
 | ----------------- | ------------------ | -------- |
-| `packages/nopy`   | `@bitstack/nopy`   | `nopy`   |
-| `packages/keyman` | `@bitstack/keyman` | `keyman` |
+| `packages/nopy`   | `@bitsquare/nopy`   | `nopy`   |
+| `packages/keyman` | `@bitsquare/keyman` | `keyman` |
 
 Both are ESM, both declare `engines.node >= 22`, and both expose a single
 executable through `bin`, so `npm install -g` puts `nopy` / `keyman` on the
@@ -155,7 +155,7 @@ semver even when the abbreviated sha happens to be all digits. The run number is
 monotonic, so every push produces a version that has never existed before.
 
 ```sh
-pnpm add @bitstack/nopy@main
+pnpm add @bitsquare/nopy@main
 ```
 
 Snapshots never reach npmjs and never move `latest`. The version is written into
@@ -175,7 +175,7 @@ edit is discarded with the workspace and is never committed.
    ```
 
 The tag name is `<directory>-v<version>` — the directory under `packages/`, not
-the npm name. `nopy-v1.2.0`, not `@bitstack/nopy-v1.2.0`.
+the npm name. `nopy-v1.2.0`, not `@bitsquare/nopy-v1.2.0`.
 
 The tag decides **which** package ships; `package.json` decides the **version**.
 The workflow re-reads the manifest and refuses to continue if the two disagree:
@@ -193,7 +193,7 @@ a coincidence, not a requirement.
 
 What a successful run leaves behind:
 
-- `@bitstack/<pkg>@<version>` on the Gitea registry
+- `@bitsquare/<pkg>@<version>` on the Gitea registry
 - the same tarball on npmjs, public, under `latest` or `next`
 - a Gitea release on the tag, with notes and an install snippet
 - a step summary with both install commands
@@ -228,7 +228,7 @@ organisation to share across repos.
 
 | Secret            | Required | Purpose                                                   |
 | ----------------- | -------- | --------------------------------------------------------- |
-| `NPM_TOKEN`       | yes      | npmjs granular token, read-and-write on `@bitstack/*`      |
+| `NPM_TOKEN`       | yes      | npmjs granular token, read-and-write on `@bitsquare/*`      |
 | `MYGITEA_NPM_TOKEN` | yes      | Gitea PAT with `write:package`                             |
 
 `GITEA_TOKEN` is injected into every run by Gitea itself, and the workflows fall
@@ -241,12 +241,12 @@ practice. Create it under **Settings → Applications → Access Tokens** with t
 `package` scope set to read-and-write; its owner needs package-write on the
 `BitSquare` organisation, since the registry path is org-owned.
 
-For npmjs, create a **granular access token** scoped to `@bitstack/*` with
+For npmjs, create a **granular access token** scoped to `@bitsquare/*` with
 read-and-write permission, and set 2FA to not-required so it works
 unattended. npm warns against that combination and points at Trusted Publishing
 instead — but Trusted Publishing federates only GitHub Actions and GitLab CI/CD
 over OIDC, and Gitea is not a provider it accepts. A token is the only route
-from this runner. Scoping the token to `@bitstack/*` is what keeps the exposure
+from this runner. Scoping the token to `@bitsquare/*` is what keeps the exposure
 small: a leak lets someone publish to that scope, not touch the account.
 
 > npm caps granular token lifetime at 90 days, so `NPM_TOKEN` needs rotating
@@ -264,7 +264,7 @@ small: a leak lets someone publish to that scope, not touch the account.
 
 ## Registry authentication in the workflows
 
-`release.yml` has to talk to two different registries about the same `@bitstack`
+`release.yml` has to talk to two different registries about the same `@bitsquare`
 scope inside one job. It does that without ever mutating `~/.npmrc`:
 
 - each publish step writes its own credentials file, created with
@@ -284,20 +284,20 @@ file written into the workspace can never be committed by accident.
 From npmjs — public, no configuration:
 
 ```sh
-npm install -g @bitstack/nopy @bitstack/keyman
+npm install -g @bitsquare/nopy @bitsquare/keyman
 ```
 
 From the Gitea registry, which holds every snapshot plus a mirror of every
 release. Per-project, in the repo's `.npmrc`:
 
 ```ini
-@bitstack:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
 ```
 
 Globally with credentials, in `~/.npmrc`:
 
 ```ini
-@bitstack:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
 //gitea.bitsquare.dev/api/packages/BitSquare/npm/:_authToken=<your gitea token>
 ```
 
@@ -308,7 +308,7 @@ instance and organisation automatically.
 To track snapshots in another project:
 
 ```sh
-pnpm add @bitstack/nopy@main
+pnpm add @bitsquare/nopy@main
 ```
 
 ## Design decisions
@@ -360,14 +360,14 @@ Try the binary as an end user would get it, without publishing:
 ```sh
 cd packages/nopy && pnpm run link:local   # build + npm link
 nopy --help
-npm unlink -g @bitstack/nopy
+npm unlink -g @bitsquare/nopy
 ```
 
 Check that a version is not already taken before you tag:
 
 ```sh
-npm view @bitstack/nopy@1.2.0 version                    # npmjs
-npm view @bitstack/nopy@1.2.0 version \
+npm view @bitsquare/nopy@1.2.0 version                    # npmjs
+npm view @bitsquare/nopy@1.2.0 version \
   --registry https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
 ```
 
@@ -391,14 +391,14 @@ npm view @bitstack/nopy@1.2.0 version \
 Meanwhile:
 
 ```sh
-npm dist-tag add @bitstack/nopy@1.1.9 latest    # point users back
-npm deprecate @bitstack/nopy@1.2.0 "Broken build, use 1.2.1"
+npm dist-tag add @bitsquare/nopy@1.1.9 latest    # point users back
+npm deprecate @bitsquare/nopy@1.2.0 "Broken build, use 1.2.1"
 ```
 
 `npm unpublish` is only possible within 72 hours and burns the version number
 forever; a deprecation with a working `latest` is almost always the better move.
 
-**On Gitea**, delete the version under **Packages → @bitstack/… → Settings**
+**On Gitea**, delete the version under **Packages → @bitsquare/… → Settings**
 before that exact version can be published again.
 
 **A bad tag** can be moved, but only before the release workflow has published

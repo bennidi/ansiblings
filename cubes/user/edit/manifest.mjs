@@ -1,4 +1,4 @@
-import { cubes } from '@bitstack/nopy';
+import { cubes } from '@bitsquare/nopy';
 import { z } from 'zod';
 
 // [agnt://cogen/cogen/user-edit-1]{cartridge: "ansiblings/cubes", action: "generated", status: "generated"}

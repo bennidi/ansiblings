@@ -1,7 +1,7 @@
 # Every commit that lands on `main` publishes a prerelease of both packages to
 # the Gitea npm registry under the `main` dist-tag:
 #
-#   pnpm add @bitstack/nopy@main
+#   pnpm add @bitsquare/nopy@main
 #
 # The verification gate runs here rather than in ci.yml so a snapshot can never
 # be published from a red `main`. Versions are derived, never committed —
@@ -87,7 +87,7 @@ jobs:
           fi
           install -m 600 /dev/null "$NPMRC"
           {
-            printf '@bitstack:registry=%s\n' "$REGISTRY"
+            printf '@bitsquare:registry=%s\n' "$REGISTRY"
             printf '//%s:_authToken=%s\n' "${REGISTRY#*://}" "$REGISTRY_TOKEN"
           } >> "$NPMRC"
 

@@ -20,7 +20,7 @@ Self-contained deployment units consisting of:
 
 ```javascript
 import { z } from 'zod'
-import { cubes } from '@bitstack/nopy'
+import { cubes } from '@bitsquare/nopy'
 
 export default cubes.Manifest({
     id: 'apt:install',
@@ -209,7 +209,7 @@ This package is part of a yarn workspace monorepo. Install from the repository r
 ```bash
 # From repository root (/ansiblings)
 yarn install
-yarn workspace @bitstack/nopy build
+yarn workspace @bitsquare/nopy build
 ```
 
 To use the `nopy` command globally, you can:
@@ -217,7 +217,7 @@ To use the `nopy` command globally, you can:
 1. **Use yarn workspace command**:
 
    ```bash
-   yarn workspace @bitstack/nopy nopy
+   yarn workspace @bitsquare/nopy nopy
    ```
 
 2. **Link the package globally**:
