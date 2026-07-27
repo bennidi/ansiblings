@@ -25,9 +25,10 @@ jobs:
     env:
       # e.g. https://gitea.example.com/api/packages/BitSquare/npm/
       REGISTRY: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}/npm/
-      # GITEA_TOKEN is injected automatically; override with a PAT that carries
-      # `write:package` if the automatic token is not scoped for the registry.
-      REGISTRY_TOKEN: ${{ secrets.GITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}
+      # GITEA_TOKEN is injected automatically but the package registry rejects
+      # it — it is a repo-scoped task token. MYGITEA_NPM_TOKEN must be a PAT with
+      # `write:package`; the fallback only survives here for other instances.
+      REGISTRY_TOKEN: ${{ secrets.MYGITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}
       NPMRC: ${{ github.workspace }}/.npmrc-gitea
 
     steps:
@@ -81,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${REGISTRY_TOKEN}" ]; then
-            echo "::error::No registry token. Add a GITEA_NPM_TOKEN secret with write:package scope."
+            echo "::error::No registry token. Add a MYGITEA_NPM_TOKEN secret with write:package scope."
             exit 1
           fi
           install -m 600 /dev/null "$NPMRC"

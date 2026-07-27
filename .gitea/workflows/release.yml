@@ -9,8 +9,10 @@
 # of `latest`.
 #
 # Required secrets:
-#   NPM_TOKEN        npmjs automation token with publish rights on @bitstack
-#   GITEA_NPM_TOKEN  optional; PAT with write:package if GITEA_TOKEN is not enough
+#   NPM_TOKEN        npmjs granular token, read-and-write on @bitstack/*, 2FA
+#                    not required. Expires after 90 days — rotate it.
+#   MYGITEA_NPM_TOKEN  Gitea PAT with write:package. The automatic GITEA_TOKEN is
+#                    a repo-scoped task token and the package registry rejects it.
 
 name: Release
 
@@ -29,7 +31,7 @@ jobs:
 
     env:
       GITEA_REGISTRY: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}/npm/
-      GITEA_REGISTRY_TOKEN: ${{ secrets.GITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}
+      GITEA_REGISTRY_TOKEN: ${{ secrets.MYGITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}
       NPMJS_REGISTRY: https://registry.npmjs.org/
       NPMJS_TOKEN: ${{ secrets.NPM_TOKEN }}
       NPMRC: ${{ github.workspace }}/.npmrc-release

@@ -226,20 +226,34 @@ resolves itself.
 Configure under **Settings → Actions → Secrets**, on the repository or on the
 organisation to share across repos.
 
-| Secret            | Required | Purpose                                                          |
-| ----------------- | -------- | ---------------------------------------------------------------- |
-| `NPM_TOKEN`       | yes      | npmjs token with publish rights on the `@bitstack` scope          |
-| `GITEA_NPM_TOKEN` | maybe    | Gitea PAT with `write:package`, if the built-in token is not enough |
+| Secret            | Required | Purpose                                                   |
+| ----------------- | -------- | --------------------------------------------------------- |
+| `NPM_TOKEN`       | yes      | npmjs granular token, read-and-write on `@bitstack/*`      |
+| `MYGITEA_NPM_TOKEN` | yes      | Gitea PAT with `write:package`                             |
 
 `GITEA_TOKEN` is injected into every run by Gitea itself, and the workflows fall
-back to it via `${{ secrets.GITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}`. Add
-`GITEA_NPM_TOKEN` only if the automatic token turns out not to carry
-package-write scope on your instance — the failure mode is a `401` or `403` from
-the registry at the publish step, with the gate already green.
+back to it via `${{ secrets.MYGITEA_NPM_TOKEN || secrets.GITEA_TOKEN }}`. On
+`gitea.bitsquare.dev` that fallback is **not** sufficient: the automatic token is
+a short-lived task token scoped to git and repo API calls, and the package
+registry rejects it with `E401 Incorrect or missing password` at the publish
+step, with the gate already green. `MYGITEA_NPM_TOKEN` is therefore required in
+practice. Create it under **Settings → Applications → Access Tokens** with the
+`package` scope set to read-and-write; its owner needs package-write on the
+`BitSquare` organisation, since the registry path is org-owned.
 
-Create the npmjs token as an **automation** token, or as a granular token scoped
-to `@bitstack/*` with read-and-write permission. Classic *publish* tokens tied to
-2FA prompt interactively and cannot work on a runner.
+For npmjs, create a **granular access token** scoped to `@bitstack/*` with
+read-and-write permission, and set 2FA to not-required so it works
+unattended. npm warns against that combination and points at Trusted Publishing
+instead — but Trusted Publishing federates only GitHub Actions and GitLab CI/CD
+over OIDC, and Gitea is not a provider it accepts. A token is the only route
+from this runner. Scoping the token to `@bitstack/*` is what keeps the exposure
+small: a leak lets someone publish to that scope, not touch the account.
+
+> npm caps granular token lifetime at 90 days, so `NPM_TOKEN` needs rotating
+> roughly quarterly. The failure mode is gentle — an expired token trips the
+> secret check in `release.yml` within seconds, before anything is installed or
+> built. If it expires between the two registries, re-running after rotation is
+> safe; the `npm view` guard skips whatever already published.
 
 `release.yml` refuses to start if either token is missing, and says which one.
 
@@ -364,7 +378,7 @@ npm view @bitstack/nopy@1.2.0 version \
 | `Tag ... asks for X, but package.json declares Y`               | The manifest was not bumped, or the tag is on the wrong commit. Fix the manifest, re-tag.       |
 | `Tag ... names package 'foo', but packages/foo/package.json does not exist` | Tag prefix must be the directory name under `packages/`.                             |
 | `NPM_TOKEN secret is not set`                                   | Add the secret; the run stops before installing anything.                                       |
-| `401`/`403` from the Gitea registry                             | The automatic `GITEA_TOKEN` lacks `write:package`. Add a `GITEA_NPM_TOKEN` PAT — no edit needed. |
+| `401`/`403` from the Gitea registry                             | The automatic `GITEA_TOKEN` lacks `write:package`. Add a `MYGITEA_NPM_TOKEN` PAT — no edit needed. |
 | `E409 Conflict` / version already exists                        | Only reachable if a version was published outside the workflow; the `npm view` guard covers re-runs. |
 | Coverage step fails, thresholds look met                        | Thresholds are per package. Read which package failed — the summary table shows both.           |
 | `npm pack --dry-run` step fails                                 | A `files` or `bin` path no longer exists after the build. Fix before it reaches a registry.      |
