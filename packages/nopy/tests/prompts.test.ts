@@ -46,6 +46,7 @@ import {
   PasswordSelection,
   VariableAssignment,
 } from '../src/nopy.prompts.js';
+import { foreignZodSchema } from './helpers/foreign-zod.js';
 
 /** Grabs the single question object passed to the last inquirer.prompt call. */
 const questions = () => inquirerPrompt.mock.calls.at(-1)?.[0] as Record<string, any>[];
@@ -310,13 +311,14 @@ describe('VariableAssignment', () => {
     const nullableSchema = z.object({
       maybe: z.number().nullable().default(1),
       opt: z.number().optional().default(2),
+      given: z.number().nullable().default(3),
     });
     const variables = new Variables();
-    formRun.mockResolvedValue({ maybe: 'null', opt: '7' });
+    formRun.mockResolvedValue({ maybe: 'null', opt: '7', given: '42' });
 
     await VariableAssignment(cube('svc', 'Service', nullableSchema), variables);
 
-    expect(variables.get('svc', 'prompts')).toEqual({ maybe: null, opt: 7 });
+    expect(variables.get('svc', 'prompts')).toEqual({ maybe: null, opt: 7, given: 42 });
   });
 
   it('treats an empty string as null for a nullable field', async () => {
@@ -355,5 +357,29 @@ describe('VariableAssignment', () => {
       VariableAssignment(cube('svc', 'Service', schema), variables)
     ).resolves.toBeUndefined();
     expect(variables.get('svc', 'prompts')).toEqual({});
+  });
+
+  it('coerces against a schema built by a different copy of zod', async () => {
+    // Guards the discriminant in `coerceValue`: under `instanceof` every check
+    // here returns false and the answers stay strings, silently.
+    const variables = new Variables();
+    formRun.mockResolvedValue({ port: '9090', enabled: 'true', maybe: '' });
+
+    await VariableAssignment(
+      cube(
+        'svc',
+        'Service',
+        foreignZodSchema(
+          z.object({
+            port: z.number().default(8080),
+            enabled: z.boolean().default(false),
+            maybe: z.number().nullable().default(1),
+          })
+        )
+      ),
+      variables
+    );
+
+    expect(variables.get('svc', 'prompts')).toEqual({ port: 9090, enabled: true, maybe: null });
   });
 });

@@ -136,14 +136,63 @@ describe('loader edge cases', () => {
       expect(errors[0]).toMatch(/Failed to load manifest/);
     });
 
-    it('reports duplicate cube ids', async () => {
+    it('reports duplicate cube ids, naming every directory that claims one', async () => {
       cube('first', 'export default { id: "dup", name: "First" }');
       cube('second', 'export default { id: "dup", name: "Second" }');
 
       const { cubes, errors } = await loadCubes();
 
       expect(Object.keys(cubes)).toEqual(['dup']);
-      expect(errors[0]).toMatch(/Duplicate cube id 'dup'/);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/Duplicate cube id 'dup' from 2 sources/);
+      expect(errors[0]).toContain(path.join(tmpDir, 'first'));
+      expect(errors[0]).toContain(path.join(tmpDir, 'second'));
+    });
+
+    it('keeps scanning below a duplicate instead of dropping the subtree', async () => {
+      cube('first', 'export default { id: "dup", name: "First" }');
+      cube('second', 'export default { id: "dup", name: "Second" }');
+      cube('second/inner', 'export default { id: "buried", name: "Buried" }');
+
+      const { cubes, errors } = await loadCubes();
+
+      expect(cubes.buried).toBeDefined();
+      expect(errors).toHaveLength(1);
+    });
+
+    it('reports the same duplicate whichever root is scanned first', async () => {
+      cube('a/one', 'export default { id: "dup", name: "One" }');
+      cube('b/two', 'export default { id: "dup", name: "Two" }');
+      const roots = [path.join(tmpDir, 'a'), path.join(tmpDir, 'b')];
+
+      fs.writeFileSync(path.join(tmpDir, '.nopyrc.json'), JSON.stringify({ cubeDirs: roots }));
+      const forwards = await loadCubes();
+
+      fs.writeFileSync(
+        path.join(tmpDir, '.nopyrc.json'),
+        JSON.stringify({ cubeDirs: [...roots].reverse() })
+      );
+      const backwards = await loadCubes();
+
+      expect(forwards.errors[0]).toContain(path.join(tmpDir, 'a', 'one'));
+      expect(forwards.errors[0]).toContain(path.join(tmpDir, 'b', 'two'));
+      expect(backwards.errors).toHaveLength(1);
+      expect(new Set(backwards.errors[0].split('\n'))).toEqual(
+        new Set(forwards.errors[0].split('\n'))
+      );
+    });
+
+    it('does not call one directory a duplicate of itself when two roots reach it', async () => {
+      cube('nested/one', 'export default { id: "once", name: "Once" }');
+      fs.writeFileSync(
+        path.join(tmpDir, '.nopyrc.json'),
+        JSON.stringify({ cubeDirs: ['./', './nested'] })
+      );
+
+      const { cubes, errors } = await loadCubes();
+
+      expect(errors).toEqual([]);
+      expect(cubes.once).toBeDefined();
     });
 
     it('skips hidden and node_modules directories', async () => {

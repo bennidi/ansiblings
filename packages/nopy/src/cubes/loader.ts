@@ -50,67 +50,130 @@ function extractCubeId(manifest: Manifest): string | undefined {
   return match ? match[1] : undefined;
 }
 
+/** A cube found on disk, before ids have been checked against each other. */
+interface CubeCandidate {
+  id: string;
+  manifest: Manifest;
+  dir: string;
+  deployScript: string;
+}
+
+/** What one root directory contributed. */
+interface ScanResult {
+  candidates: CubeCandidate[];
+  errors: string[];
+}
+
 /**
- * Loads all cubes from discovered cube directories.
+ * Walks one root, collecting every cube below it.
+ *
+ * Deliberately does not decide anything about ids: a duplicate is only visible
+ * once every root has been walked, and stopping the descent here would hide
+ * whatever sits below the offending directory.
  */
-export async function loadCubes(): Promise<LoadResult> {
-  const cubesFolders = findCubeDirectories();
-  const cubes: Record<string, Cube> = {};
-  const errors: string[] = [];
+async function scanDirectory(currentDir: string, result: ScanResult): Promise<void> {
+  const entries = (await fs.readdir(currentDir, { withFileTypes: true })).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
 
-  async function scanDirectory(currentDir: string, baseDir: string): Promise<void> {
-    const entries = await fs.readdir(currentDir, { withFileTypes: true });
+  const files = entries.filter((e) => e.isFile());
+  const manifestFile = files.find(
+    (f) => f.name === 'manifest.mjs' || f.name.endsWith('.manifest.mjs')
+  );
+  const deployFile = files.find((f) => f.name === 'deploy.py' || f.name.endsWith('.deploy.py'));
 
-    const files = entries.filter((e) => e.isFile());
-    const manifestFile = files.find(
-      (f) => f.name === 'manifest.mjs' || f.name.endsWith('.manifest.mjs')
-    );
-    const deployFile = files.find((f) => f.name === 'deploy.py' || f.name.endsWith('.deploy.py'));
+  if (manifestFile && deployFile) {
+    const manifestPath = path.join(currentDir, manifestFile.name);
 
-    if (manifestFile && deployFile) {
-      const cubePath = currentDir;
-      const manifestPath = path.join(cubePath, manifestFile.name);
+    try {
+      const manifest = (await import(manifestPath)).default as Manifest;
 
-      try {
-        const manifest = (await import(manifestPath)).default as Manifest;
+      if (!manifest || typeof manifest !== 'object') {
+        result.errors.push(`Invalid manifest export in ${manifestPath}`);
+      } else if (!manifest.name) {
+        result.errors.push(`Invalid manifest format in ${manifestPath}: missing 'name'`);
+      } else {
+        const cubeId = extractCubeId(manifest) || path.basename(currentDir);
 
-        if (!manifest || typeof manifest !== 'object') {
-          errors.push(`Invalid manifest export in ${manifestPath}`);
-        } else if (!manifest.name) {
-          errors.push(`Invalid manifest format in ${manifestPath}: missing 'name'`);
-        } else {
-          const cubeId = extractCubeId(manifest) || path.basename(cubePath);
+        // Ensure basic properties
+        manifest.id = cubeId;
+        manifest.schema = manifest.schema ?? z.object({});
 
-          if (cubes[cubeId]) {
-            errors.push(`Duplicate cube id '${cubeId}'`);
-            return;
-          }
-
-          // Ensure basic properties
-          manifest.id = cubeId;
-          manifest.schema = manifest.schema ?? z.object({});
-
-          cubes[cubeId] = new Cube(manifest, cubePath, deployFile.name);
-        }
-      } catch (err) {
-        errors.push(`Failed to load manifest ${manifestPath}: ${err}`);
+        result.candidates.push({
+          id: cubeId,
+          manifest,
+          dir: currentDir,
+          deployScript: deployFile.name,
+        });
       }
-    }
-
-    for (const entry of entries) {
-      if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
-        await scanDirectory(path.join(currentDir, entry.name), baseDir);
-      }
+    } catch (err) {
+      result.errors.push(`Failed to load manifest ${manifestPath}: ${err}`);
     }
   }
 
-  await Promise.all(
+  for (const entry of entries) {
+    if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+      await scanDirectory(path.join(currentDir, entry.name), result);
+    }
+  }
+}
+
+/** The message a duplicate id produces. Aborts the run — see `nopy.main.ts`. */
+function duplicateError(id: string, group: CubeCandidate[]): string {
+  const where = group.map((c) => `  ${c.dir}`).join('\n');
+  return (
+    `Duplicate cube id '${id}' from ${group.length} sources:\n${where}\n` +
+    `Rename one of them, or remove a source from .nopyrc.json.`
+  );
+}
+
+/**
+ * Loads all cubes from discovered cube directories.
+ *
+ * Scanning and id resolution are separate passes on purpose. Each root
+ * contributes its own candidate list, and those lists are concatenated in
+ * root order rather than in whichever order the concurrent scans happened to
+ * finish — so which cube is reported as "the duplicate" is the same on every
+ * run, which is what makes the hard error testable.
+ */
+export async function loadCubes(): Promise<LoadResult> {
+  const cubesFolders = findCubeDirectories();
+
+  const scans = await Promise.all(
     cubesFolders.map(async (folder) => {
+      const result: ScanResult = { candidates: [], errors: [] };
       if (fs.existsSync(folder)) {
-        await scanDirectory(folder, folder);
+        await scanDirectory(folder, result);
       }
+      return result;
     })
   );
+
+  // Promise.all preserves input order regardless of completion order.
+  const errors = scans.flatMap((scan) => scan.errors);
+
+  // One directory reachable from two roots (a `cubeDirs` entry nested under a
+  // `.npcubes` marker, say) is one cube seen twice, not a collision.
+  const seenDirs = new Set<string>();
+  const byId = new Map<string, CubeCandidate[]>();
+
+  for (const candidate of scans.flatMap((scan) => scan.candidates)) {
+    if (seenDirs.has(candidate.dir)) continue;
+    seenDirs.add(candidate.dir);
+
+    const group = byId.get(candidate.id);
+    if (group) group.push(candidate);
+    else byId.set(candidate.id, [candidate]);
+  }
+
+  const cubes: Record<string, Cube> = {};
+  for (const [id, group] of byId) {
+    if (group.length > 1) errors.push(duplicateError(id, group));
+    // The map is still populated for the callers that only report; a duplicate
+    // is fatal, so which candidate landed here never reaches a deploy.
+    const [first] = group;
+    cubes[id] = new Cube(first.manifest, first.dir, first.deployScript);
+  }
 
   return { cubes, errors };
 }

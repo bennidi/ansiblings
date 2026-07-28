@@ -55,12 +55,40 @@ export type ResolutionConfig = {
 };
 
 /**
- * Raw config file structure (includes resolution)
+ * A cube package named in `cubePackages`, paired with where it was named.
+ *
+ * Node resolution has to start from the config file that asked for the package,
+ * not from `process.cwd()` — otherwise a package listed in `~/.nopyrc.json`
+ * only resolves in projects that happen to depend on it themselves. This is the
+ * same problem {@link PATH_PROPERTIES} solves for `cubeDirs`, except the answer
+ * is a reference to resolve later rather than a rewritten path.
  */
-export interface NopyConfigFile extends Partial<NopyConfig> {
+export interface CubePackageRef {
+  /** The package name as written in the config, e.g. `@acme/cubes-net`. */
+  spec: string;
+  /** Directory of the `.nopyrc.json` that named it. */
+  from: string;
+}
+
+/**
+ * Raw config file structure (includes resolution)
+ *
+ * Diverges from {@link NopyConfig} for `cubePackages`: a file lists plain
+ * package names, and loading turns each into a {@link CubePackageRef}.
+ */
+export interface NopyConfigFile extends Omit<Partial<NopyConfig>, 'cubePackages'> {
+  /** Cube packages to load, by package name */
+  cubePackages?: string[];
   /** Customize merge behavior for specific properties */
   resolution?: ResolutionConfig;
 }
+
+/**
+ * A config file whose paths have been resolved — what actually gets merged.
+ */
+type ResolvedConfigFile = Omit<NopyConfigFile, 'cubePackages'> & {
+  cubePackages?: CubePackageRef[];
+};
 
 /**
  * Nopy configuration file structure
@@ -70,6 +98,8 @@ export interface NopyConfig {
   hosts: string[];
   /** Directories to search for cubes */
   cubeDirs: string[];
+  /** Installed packages to load cubes from */
+  cubePackages: CubePackageRef[];
   /** Global environment variables */
   env: TVariables;
   /** Logging configuration */
@@ -86,6 +116,7 @@ export interface NopyConfig {
 const DEFAULT_CONFIG: NopyConfig = {
   hosts: [],
   cubeDirs: [],
+  cubePackages: [],
   env: {},
 };
 
@@ -219,30 +250,33 @@ const PATH_PROPERTIES: (keyof NopyConfig)[] = ['cubeDirs'];
  * Resolves relative paths in a config file based on its location
  * Only resolves paths for properties that are known to contain filesystem paths
  */
-function resolveConfigPaths(config: NopyConfigFile, configPath: string): NopyConfigFile {
+function resolveConfigPaths(config: NopyConfigFile, configPath: string): ResolvedConfigFile {
   const configDir = path.dirname(configPath);
-  const resolved: NopyConfigFile = {};
+  const resolved: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(config)) {
     if (key === 'resolution') {
       // Don't resolve the resolution config itself
       resolved[key] = value as ResolutionConfig;
+    } else if (key === 'cubePackages') {
+      // Not a path — a package name, tagged with where to resolve it from.
+      resolved[key] = (value as string[]).map((spec) => ({ spec, from: configDir }));
     } else if (PATH_PROPERTIES.includes(key as keyof NopyConfig)) {
       // Only resolve paths for known path properties
-      resolved[key as keyof NopyConfigFile] = resolveRelativePaths(value, configDir) as any;
+      resolved[key] = resolveRelativePaths(value, configDir);
     } else {
       // Copy other properties as-is (including hosts)
-      resolved[key as keyof NopyConfigFile] = value as any;
+      resolved[key] = value;
     }
   }
 
-  return resolved;
+  return resolved as ResolvedConfigFile;
 }
 
 /**
  * Merges a child config into a parent config
  */
-function mergeConfigs(parent: NopyConfig, childFile: NopyConfigFile): NopyConfig {
+function mergeConfigs(parent: NopyConfig, childFile: ResolvedConfigFile): NopyConfig {
   const resolution = childFile.resolution || {};
   const result: Record<string, unknown> = { ...parent };
 

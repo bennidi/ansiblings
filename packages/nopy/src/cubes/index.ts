@@ -31,6 +31,8 @@ export type {
 export {
   Cube,
   Manifest,
+  zodInner,
+  zodKind,
 } from './types.js';
 
 // Utilities

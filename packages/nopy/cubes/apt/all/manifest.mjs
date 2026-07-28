@@ -1,6 +1,6 @@
 import { cubes } from '@bitsquare/nopy';
 
 export default cubes.Manifest({
-  name: '[apt-all] Test dependencies',
-  dependencies: () => ['apt/more'],
+  name: '[test:apt-all] Test dependencies',
+  dependencies: () => ['test:apt-more'],
 });

@@ -83,6 +83,28 @@ export namespace Manifest {
 }
 
 /**
+ * zod's runtime discriminant for a schema node, as a plain string.
+ *
+ * `instanceof z.ZodDefault` compares against the *running* copy of zod. A cube
+ * manifest is free to build its schema with a different copy — its own
+ * dependency, or one shipped inside a bundle — and then every `instanceof`
+ * quietly returns false and the caller falls through to a wrong answer instead
+ * of failing. `def.type` holds across instances, so nothing here may go back to
+ * `instanceof`.
+ */
+export function zodKind(zodType: unknown): string {
+  return (zodType as { def: { type: string } }).def.type;
+}
+
+/**
+ * The type a wrapper wraps — `.default()`, `.optional()`, `.nullable()`.
+ * Only call this for a node whose {@link zodKind} is one of those.
+ */
+export function zodInner(zodType: unknown): z.ZodType {
+  return (zodType as { def: { innerType: z.ZodType } }).def.innerType;
+}
+
+/**
  * Reads the `.default()` off a schema field, unwrapping the wrappers that may
  * sit above it (`.default().optional()`, `.default().nullable()`).
  *
@@ -90,15 +112,31 @@ export namespace Manifest {
  * `requiredKeys()` recognises a field the user has to supply.
  */
 function defaultValueOf(zodType: z.ZodType): unknown {
-  if (zodType instanceof z.ZodDefault) {
-    const { defaultValue } = zodType._def as { defaultValue: unknown };
+  const kind = zodKind(zodType);
+  if (kind === 'default') {
+    // zod 4 exposes `defaultValue` as a getter that already invokes a lazily
+    // declared default; the function branch is insurance against that changing.
+    const { defaultValue } = (zodType as unknown as { def: { defaultValue: unknown } }).def;
     return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
   }
-  if (zodType instanceof z.ZodOptional || zodType instanceof z.ZodNullable) {
-    return defaultValueOf(zodType._def.innerType as z.ZodType);
+  if (kind === 'optional' || kind === 'nullable') {
+    return defaultValueOf(zodInner(zodType));
   }
   return undefined;
 }
+
+/**
+ * Where a cube was discovered.
+ *
+ * Worth carrying because a cube's own directory does not say how it got into
+ * the run: `/…/node_modules/@acme/cubes-net/cubes/x` could equally have come
+ * from a `cubeDirs` entry pointing straight at it.
+ */
+export type CubeSource =
+  /** Found under a `cubeDirs` entry or a `.npcubes` marker, at `dir`. */
+  | { type: 'dir'; dir: string }
+  /** Contributed by a package named in `cubePackages`. */
+  | { type: 'package'; packageName: string; dir: string };
 
 /**
  * A fully loaded cube with its filesystem location and runtime state
@@ -107,7 +145,9 @@ export class Cube<Schema extends AnyObjectSchema = AnyObjectSchema> {
   constructor(
     public readonly manifest: Manifest<Schema>,
     public readonly dir: string,
-    public readonly deployScript: string
+    public readonly deployScript: string,
+    /** Defaults to the cube's own directory, for cubes built by hand. */
+    public readonly source: CubeSource = { type: 'dir', dir }
   ) {}
 
   get id(): string {

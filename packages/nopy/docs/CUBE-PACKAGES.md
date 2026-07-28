@@ -1,6 +1,6 @@
 # Cube bundles as npm packages
 
-Status: **plan, not a record.** Nothing here is implemented yet.
+Status: **Phase 0 has landed; Phases 1–6 are still a plan, not a record.**
 
 Distributing cubes as npm packages so a project can `pnpm add @acme/cubes-net`
 and have its cubes show up in `nopy` alongside local ones.
@@ -58,39 +58,60 @@ What blocks a clean story:
    `isSymbolicLink()`, not `isDirectory()` — the scan would skip every package.
    Package roots must be resolved explicitly.
 
-## Phase 0 — fixes that land first
+## Phase 0 — fixes that land first — **done**
 
 Independent of packaging, and the duplicate-id work depends on them.
 
-**0.1 `scanDirectory` drops subtrees on duplicates.** `loader.ts:84-87` pushes
-the error and `return`s, which exits before the recursive descent at line 100.
-Cubes nested below a duplicate never get scanned, so the error report is
-incomplete: you fix one collision, re-run, find the next. Should record the
-duplicate and keep descending.
+**0.1 `scanDirectory` drops subtrees on duplicates.** `loader.ts:84-87` pushed
+the error and `return`ed, which exited before the recursive descent at line 100.
+Cubes nested below a duplicate never got scanned, so the error report was
+incomplete: you fix one collision, re-run, find the next.
 
-**0.2 Duplicate detection is order-dependent.** `loadCubes()` runs
-`Promise.all` over folders into a shared `cubes` object, so which source is
-"first" and which is "the duplicate" varies run to run. Restructure: the scan
-emits a flat list of candidates, then a single grouping pass builds `cubes` and
-the error list. Makes the hard-error path deterministic, which the tests need.
+**0.2 Duplicate detection is order-dependent.** `loadCubes()` ran `Promise.all`
+over folders into a shared `cubes` object, so which source was "first" and which
+was "the duplicate" varied run to run.
+
+Both are one restructure. Scanning and id resolution are now separate passes:
+each root fills its own `ScanResult`, the lists are concatenated in root order
+(`Promise.all` preserves input order regardless of completion order), and a
+grouping pass builds `cubes` and the errors. `scanDirectory` no longer decides
+anything about ids, so it always descends. Directory entries are sorted, and a
+directory reachable from two roots is deduped by path — one cube seen twice is
+not a collision, which it used to be reported as.
 
 **0.3 `apt:essentials` is already declared twice.** `cubes/apt/essentials`
-declares it via `id`; `packages/nopy/cubes/apt/essentials` declares it via the
+declares it via `id`; `packages/nopy/cubes/apt/essentials` declared it via an
 `[apt:essentials]` prefix in `name`. `cubeDirs` merges root-first, so running
-`nopy` from `packages/nopy` already collects both and errors. Rename the
-`packages/nopy/cubes` fixtures (`[test:apt-essentials]`, `[test:apt-all]`,
-`[test:apt-more]`) — they are dev fixtures, not real cubes, and the migration in
-Phase 5 makes the collision permanent otherwise.
+`nopy` from `packages/nopy` collected both and aborted. Confirmed against the
+real trees before the rename:
+
+```
+Duplicate cube id 'apt:essentials' from 2 sources:
+  /…/ansiblingz/cubes/apt/essentials
+  /…/ansiblingz/packages/nopy/cubes/apt/essentials
+Rename one of them, or remove a source from .nopyrc.json.
+```
+
+The three `packages/nopy/cubes` fixtures are now `[test:apt-essentials]`,
+`[test:apt-all]` and `[test:apt-more]`; all 25 cubes load with no errors. Their
+`dependencies` were stale too — they named `apt/more` and `apt/essentials`,
+which are not ids anything declares — so they now point at the renamed ids.
 
 **0.4 `coerceValue` breaks if zod is ever duplicated.** `nopy.prompts.ts:147-154`
-discriminates with `instanceof z.ZodDefault`, `z.ZodBoolean`, `z.ZodNumber` and
+discriminated with `instanceof z.ZodDefault`, `z.ZodBoolean`, `z.ZodNumber` and
 friends — checks against the *running CLI's* zod instance. The moment a bundle
 resolves its own copy of zod (entirely possible once manifests arrive from
 `node_modules`; see Phase 4), every check returns false and `coerceValue` falls
 through to the raw string, silently. Booleans stop being booleans.
 
-Rewrite against the string discriminant, which is instance-agnostic. Verified on
-the installed zod 4.4.3:
+`defaultValueOf` in `cubes/types.ts` had the same breakage, reached whenever a
+schema has one field without a `.default()` — `getDefaults()` tries
+`safeParse({})` first, which is instance-agnostic, and only then drops to the
+per-field read.
+
+Both now discriminate on `def.type`, a plain string that holds across instances,
+via two exported helpers (`zodKind`, `zodInner`). Verified on the installed zod
+4.4.3:
 
 ```
 z.boolean().default(false).def.type        → 'default'
@@ -98,8 +119,13 @@ z.boolean().default(false).def.innerType   → { def: { type: 'boolean' } }
 z.number().def.type                        → 'number'
 ```
 
-Do this before anything else in Phase 4 lands, and it stops being a footgun for
-the local `cubes/` tree too.
+`tests/helpers/foreign-zod.ts` rebuilds a schema as plain objects carrying zod's
+`def` but not its prototype — structurally what a second copy of zod produces,
+and `instanceof`-blind, so neither call site can regress.
+
+Worth noting for Phase 4: zod 4 exposes `def.defaultValue` as a getter that
+already invokes a lazily declared default, so the `typeof === 'function'` branch
+in `defaultValueOf` is now dead. It is kept as insurance against that changing.
 
 ## Phase 1 — the bundle contract
 
@@ -376,6 +402,18 @@ With the split, the hook is a convenience rather than load-bearing: bundles
 resolve `@bitsquare/nopy-cube` through their own `node_modules` and never reach
 it.
 
+**The gotcha is bigger than CLAUDE.md says: it is two specifiers, not one.**
+Measured by linking `@bitsquare/nopy` into the root `node_modules` and loading
+the real tree — every manifest then failed on `Cannot find package 'zod'`
+instead. Manifests import `z` directly to build their schema, and pnpm's
+isolated layout puts zod under `packages/nopy/node_modules`, not the root. A
+hook that only covers `@bitsquare/nopy` moves the error rather than fixing it,
+so it has to fall back for `zod` too. With both linked, all 25 cubes load.
+
+Falling back for `zod` hands local cubes the *CLI's* zod instance, so no
+duplication arises there. Bundles are the case that duplicates it, and Phase 0.4
+is what makes that safe.
+
 New `packages/nopy/src/nopy.resolve-hook.mjs`, registered once from `loadCubes()`
 before the first `import(manifestPath)`:
 
@@ -398,8 +436,9 @@ Constraints:
   structured-cloneable (a string URL is).
 - The `.mjs` must ship in `dist` and be listed in `files` — it already is, via
   the `dist` entry.
-- It resolves `@bitsquare/nopy`, not `@bitsquare/nopy-cube`. Bundles never depend
-  on the hook; only the in-repo `cubes/` tree and hand-written local cubes do.
+- It resolves `@bitsquare/nopy` and `zod`, not `@bitsquare/nopy-cube`. Bundles
+  never depend on the hook; only the in-repo `cubes/` tree and hand-written local
+  cubes do.
 
 ## Phase 5 — proof of concept: `packages/cubes-core`
 

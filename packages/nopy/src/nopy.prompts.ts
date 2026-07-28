@@ -6,8 +6,8 @@
 import Enquirer from 'enquirer';
 import fuzzy from 'fuzzy';
 import inquirer from 'inquirer';
-import { z } from 'zod';
-import type { AnyObjectSchema, Cube } from './cubes/index.js';
+import type { z } from 'zod';
+import { type AnyObjectSchema, type Cube, zodInner, zodKind } from './cubes/index.js';
 import type { Variables } from './nopy.common.js';
 
 interface CubeChoice {
@@ -142,20 +142,32 @@ export async function HostSelection(hosts: string[]): Promise<string> {
   return selectedHost.customHost ?? selectedHost.host;
 }
 
+/**
+ * Turns a form answer — always a string — back into what the schema declares.
+ *
+ * Discriminates on {@link zodKind} rather than `instanceof`: the schema may
+ * have been built by a copy of zod that is not the one this file imported, and
+ * `instanceof` would then fail open and leave every value a string.
+ */
 function coerceValue(value: unknown, zodType: z.core.$ZodType): unknown {
   if (typeof value !== 'string') return value;
-  if (zodType instanceof z.ZodDefault) return coerceValue(value, zodType._def.innerType);
-  if (zodType instanceof z.ZodOptional) return coerceValue(value, zodType._def.innerType);
-  if (zodType instanceof z.ZodNullable) {
-    if (value === 'null' || value === '') return null;
-    return coerceValue(value, zodType._def.innerType);
+
+  switch (zodKind(zodType)) {
+    case 'default':
+    case 'optional':
+      return coerceValue(value, zodInner(zodType));
+    case 'nullable':
+      if (value === 'null' || value === '') return null;
+      return coerceValue(value, zodInner(zodType));
+    case 'boolean':
+      return value === 'true' || value === 'yes' || value === '1';
+    case 'number': {
+      const num = Number(value);
+      return Number.isNaN(num) ? value : num;
+    }
+    default:
+      return value;
   }
-  if (zodType instanceof z.ZodBoolean) return value === 'true' || value === 'yes' || value === '1';
-  if (zodType instanceof z.ZodNumber) {
-    const num = Number(value);
-    return Number.isNaN(num) ? value : num;
-  }
-  return value;
 }
 
 interface FormChoice {

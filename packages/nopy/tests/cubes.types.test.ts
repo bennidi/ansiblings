@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { Cube, Manifest } from '../src/cubes/types.js';
+import { foreignZodSchema } from './helpers/foreign-zod.js';
 
 const cube = (schema: z.ZodObject<any>) =>
   new Cube(Manifest.create({ id: 'c', name: 'C', schema }), '/cubes/c', 'deploy.py');
@@ -63,6 +64,22 @@ describe('Cube.getDefaults', () => {
 
   it('returns an empty object for an empty schema', () => {
     expect(cube(z.object({})).getDefaults()).toEqual({});
+  });
+
+  it('reads defaults off a schema built by a different copy of zod', () => {
+    // The per-field fallback reads zod's internals directly. Under `instanceof`
+    // a foreign schema yields no defaults at all, without erroring.
+    const c = cube(
+      foreignZodSchema(
+        z.object({
+          REQUIRED: z.string(),
+          PRIORITY: z.number().default(10),
+          NESTED: z.number().default(2).optional(),
+        })
+      )
+    );
+
+    expect(c.getDefaults()).toEqual({ PRIORITY: 10, NESTED: 2 });
   });
 });
 
