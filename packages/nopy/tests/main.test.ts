@@ -93,7 +93,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-  state.config = { hosts: ['web-1'], cubeDirs: [], env: {} };
+  state.config = { hosts: ['web-1'], cubeDirs: [], cubePackages: [], env: {} };
   state.loadResult = { cubes: { 'cube-a': {} }, errors: [] };
   state.deployCalls = [call('cube-a')];
   state.cubeSessions = [{ key: 'cube-a', variables: {} }];
@@ -174,6 +174,7 @@ describe('nopy', () => {
       state.config = {
         hosts: ['web-1'],
         cubeDirs: ['/cubes'],
+        cubePackages: [{ spec: '@acme/cubes-net', from: '/project' }],
         env: { TOKEN: 'secret', EMPTY: '' },
       };
 
@@ -183,6 +184,8 @@ describe('nopy', () => {
       expect(text).toContain('Configuration');
       expect(text).toContain('Hosts:');
       expect(text).toContain('Cube dirs:');
+      // Named by package, not by wherever it resolved to on disk.
+      expect(text).toContain('Cube pkgs:   @acme/cubes-net');
       expect(text).toContain('continue-on-error');
       // Values are never echoed, only their presence.
       expect(text).toContain('TOKEN: <VALUE>');
@@ -191,7 +194,7 @@ describe('nopy', () => {
     });
 
     it('omits empty sections', async () => {
-      state.config = { hosts: [], cubeDirs: [], env: {} };
+      state.config = { hosts: [], cubeDirs: [], cubePackages: [], env: {} };
 
       await nopy();
 
@@ -199,6 +202,7 @@ describe('nopy', () => {
       expect(text).toContain('Configuration');
       expect(text).not.toContain('Hosts:');
       expect(text).not.toContain('Cube dirs:');
+      expect(text).not.toContain('Cube pkgs:');
       expect(text).not.toContain('Env vars:');
     });
 

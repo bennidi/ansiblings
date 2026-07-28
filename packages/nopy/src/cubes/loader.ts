@@ -3,21 +3,55 @@
  * @module cubes/loader
  */
 
+import module from 'node:module';
 import path from 'node:path';
+import { Cube, type CubeSource, type LoadResult, type Manifest } from '@bitsquare/nopy-cube';
 import { z } from 'zod';
 import { fs } from 'zx';
 import { loadConfig } from '../nopy.config.js';
-import { Cube, type LoadResult, type Manifest } from './types.js';
+import { resolveCubePackages } from './packages.js';
+
+let hookRegistered = false;
 
 /**
- * Traverses upwards from the current working directory to the root
- * and collects all directories that contain a `.npcubes` marker file.
+ * Installs the fallback resolver that lets a manifest in a bare directory
+ * import `@bitsquare/nopy-cube` or `zod` — see `resolve-hook.mjs`.
  *
- * Also includes directories specified in the `.nopyrc.json` configuration.
- *
- * @returns Array of absolute paths to directories containing cubes
+ * `module.register()` is process-global and cannot be undone, so this runs once
+ * and only when cubes are about to be imported. Registration failing is not
+ * worth aborting a run over: without the hook, a cube that needed it fails on
+ * its own import with a message that names the file.
  */
-export function findCubeDirectories(): string[] {
+function registerResolveHook(): void {
+  if (hookRegistered) return;
+  hookRegistered = true;
+
+  try {
+    // `from` is a URL inside this package, so the hook thread resolves the
+    // fallbacks out of the running CLI's own dependencies.
+    module.register('./resolve-hook.mjs', import.meta.url, { data: { from: import.meta.url } });
+  } catch {
+    // Nothing to do: the hook is a convenience, never load-bearing.
+  }
+}
+
+/** A directory to scan, and what put it in the list. */
+export interface CubeRoot {
+  dir: string;
+  source: CubeSource;
+}
+
+/**
+ * Collects every root to scan for cubes:
+ *
+ * - `cubeDirs` from the merged configuration,
+ * - every ancestor of the working directory holding a `.npcubes` marker file,
+ * - the cube directories of every package named in `cubePackages`.
+ *
+ * Only the last of those can fail — a missing directory is ignored, a missing
+ * package is not (see `resolveCubePackages`).
+ */
+export function findCubeRoots(): { roots: CubeRoot[]; errors: string[] } {
   let currentDir = process.cwd();
   const config = loadConfig();
   const dirSet = new Set<string>(config.cubeDirs.map((dir) => path.resolve(process.cwd(), dir)));
@@ -38,7 +72,29 @@ export function findCubeDirectories(): string[] {
     currentDir = parentDir;
   }
 
-  return [...dirSet];
+  const roots: CubeRoot[] = [...dirSet].map((dir) => ({ dir, source: { type: 'dir', dir } }));
+
+  const { packages, errors } = resolveCubePackages(config.cubePackages);
+  for (const pkg of packages) {
+    for (const dir of pkg.dirs) {
+      roots.push({ dir, source: { type: 'package', packageName: pkg.name, dir } });
+    }
+  }
+
+  return { roots, errors };
+}
+
+/**
+ * The directories {@link findCubeRoots} would scan.
+ *
+ * Kept for callers that only want the paths; anything that needs to attribute
+ * a cube to where it came from should use `findCubeRoots` instead, which also
+ * reports the errors this one drops.
+ *
+ * @returns Array of absolute paths to directories containing cubes
+ */
+export function findCubeDirectories(): string[] {
+  return findCubeRoots().roots.map((root) => root.dir);
 }
 
 /**
@@ -56,10 +112,12 @@ interface CubeCandidate {
   manifest: Manifest;
   dir: string;
   deployScript: string;
+  source: CubeSource;
 }
 
 /** What one root directory contributed. */
 interface ScanResult {
+  root: CubeRoot;
   candidates: CubeCandidate[];
   errors: string[];
 }
@@ -99,11 +157,23 @@ async function scanDirectory(currentDir: string, result: ScanResult): Promise<vo
         manifest.id = cubeId;
         manifest.schema = manifest.schema ?? z.object({});
 
+        // A `secrets` entry naming a key that is not in the schema protects
+        // nothing, and a typo in one is invisible at runtime — the value would
+        // just be persisted. Cheaper to refuse the cube than to ship the leak.
+        const unknown = (manifest.secrets ?? []).filter((key) => !(key in manifest.schema.shape));
+        if (unknown.length > 0) {
+          result.errors.push(
+            `Invalid manifest in ${manifestPath}: 'secrets' names ${unknown.join(', ')}, ` +
+              `which ${unknown.length === 1 ? 'is' : 'are'} not in the schema`
+          );
+        }
+
         result.candidates.push({
           id: cubeId,
           manifest,
           dir: currentDir,
           deployScript: deployFile.name,
+          source: result.root.source,
         });
       }
     } catch (err) {
@@ -118,9 +188,23 @@ async function scanDirectory(currentDir: string, result: ScanResult): Promise<vo
   }
 }
 
-/** The message a duplicate id produces. Aborts the run — see `nopy.main.ts`. */
+/**
+ * The message a duplicate id produces. Aborts the run — see `nopy.main.ts`.
+ *
+ * There is deliberately no precedence rule to fall back on: two cubes claiming
+ * one id are mutually exclusive, and the fix belongs upstream. So the message
+ * has to carry everything needed to go and make it, which means naming every
+ * claimant and how each got into the run.
+ */
 function duplicateError(id: string, group: CubeCandidate[]): string {
-  const where = group.map((c) => `  ${c.dir}`).join('\n');
+  const label = (candidate: CubeCandidate) =>
+    candidate.source.type === 'package' ? `package ${candidate.source.packageName}` : 'directory';
+  const width = Math.max(...group.map((candidate) => label(candidate).length));
+
+  const where = group
+    .map((candidate) => `  ${label(candidate).padEnd(width)}  ${candidate.dir}`)
+    .join('\n');
+
   return (
     `Duplicate cube id '${id}' from ${group.length} sources:\n${where}\n` +
     `Rename one of them, or remove a source from .nopyrc.json.`
@@ -137,20 +221,21 @@ function duplicateError(id: string, group: CubeCandidate[]): string {
  * run, which is what makes the hard error testable.
  */
 export async function loadCubes(): Promise<LoadResult> {
-  const cubesFolders = findCubeDirectories();
+  const { roots, errors: rootErrors } = findCubeRoots();
+  registerResolveHook();
 
   const scans = await Promise.all(
-    cubesFolders.map(async (folder) => {
-      const result: ScanResult = { candidates: [], errors: [] };
-      if (fs.existsSync(folder)) {
-        await scanDirectory(folder, result);
+    roots.map(async (root) => {
+      const result: ScanResult = { root, candidates: [], errors: [] };
+      if (fs.existsSync(root.dir)) {
+        await scanDirectory(root.dir, result);
       }
       return result;
     })
   );
 
   // Promise.all preserves input order regardless of completion order.
-  const errors = scans.flatMap((scan) => scan.errors);
+  const errors = [...rootErrors, ...scans.flatMap((scan) => scan.errors)];
 
   // One directory reachable from two roots (a `cubeDirs` entry nested under a
   // `.npcubes` marker, say) is one cube seen twice, not a collision.
@@ -172,7 +257,7 @@ export async function loadCubes(): Promise<LoadResult> {
     // The map is still populated for the callers that only report; a duplicate
     // is fatal, so which candidate landed here never reaches a deploy.
     const [first] = group;
-    cubes[id] = new Cube(first.manifest, first.dir, first.deployScript);
+    cubes[id] = new Cube(first.manifest, first.dir, first.deployScript, first.source);
   }
 
   return { cubes, errors };

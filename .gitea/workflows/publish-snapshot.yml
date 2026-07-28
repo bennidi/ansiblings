@@ -1,5 +1,5 @@
-# Every commit that lands on `main` publishes a prerelease of both packages to
-# the Gitea npm registry under the `main` dist-tag:
+# Every commit that lands on `main` publishes a prerelease of every publishable
+# package to the Gitea npm registry under the `main` dist-tag:
 #
 #   pnpm add @bitsquare/nopy@main
 #
@@ -78,6 +78,11 @@ jobs:
         # Explicit, so the publish step can skip lifecycle scripts entirely.
         run: pnpm run build
 
+      - name: Verify the packed manifests
+        # Packages link to each other with `workspace:*`, which npm cannot
+        # install. Proves on the tarball that pack rewrote it.
+        run: node scripts/verify-pack.mjs
+
       - name: Authenticate against the Gitea registry
         run: |
           set -euo pipefail
@@ -97,23 +102,35 @@ jobs:
           export npm_config_userconfig="$NPMRC"
           : "${GITHUB_STEP_SUMMARY:=/dev/null}"
           short_sha=$(git rev-parse --short=7 HEAD)
+          # Dependencies first, so the registry never briefly holds a package
+          # whose dependency has not landed yet.
+          dirs=$(node scripts/publish-order.mjs)
 
-          for dir in packages/*/; do
-            name=$(node -p "require('./${dir}package.json').name")
-            base=$(node -p "require('./${dir}package.json').version")
+          # Pass 1: stamp every manifest before anything is packed. `pnpm
+          # publish` substitutes `workspace:*` with the version the linked
+          # package declares at pack time, so nopy-cube has to be carrying its
+          # snapshot version by the time nopy is packed.
+          for dir in $dirs; do
+            base=$(node -p "require('./${dir}/package.json').version")
             # `g` prefix keeps the identifier a valid semver one even when the
             # abbreviated sha happens to be all digits.
             version="${base}-main.${{ github.run_number }}.g${short_sha}"
+            (cd "$dir" && npm pkg set "version=${version}")
+          done
+
+          # Pass 2: publish.
+          for dir in $dirs; do
+            name=$(node -p "require('./${dir}/package.json').name")
+            version=$(node -p "require('./${dir}/package.json').version")
 
             echo "::group::${name}@${version}"
             if npm view "${name}@${version}" version --registry "$REGISTRY" >/dev/null 2>&1; then
               echo "Already published — skipping (this is a re-run of the same workflow)."
             else
-              (
-                cd "$dir"
-                npm pkg set "version=${version}"
-                npm publish --ignore-scripts --tag main --registry "$REGISTRY"
-              )
+              # pnpm, not npm: npm ships `workspace:*` verbatim and the install
+              # then fails with EUNSUPPORTEDPROTOCOL. --no-git-checks because
+              # stamping the versions above left the tree dirty.
+              (cd "$dir" && pnpm publish --ignore-scripts --no-git-checks --tag main --registry "$REGISTRY")
             fi
             echo "::endgroup::"
 

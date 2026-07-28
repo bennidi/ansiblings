@@ -6,6 +6,9 @@
 
 // Cubes module
 export * from './cubes/index.js';
+export type { Assignment, Origin, TVariables, Value } from './nopy.common.js';
+// Variables
+export { MASK, Variable, Variables } from './nopy.common.js';
 export type {
   ExecutionConfig,
   HistoryConfig,
@@ -28,6 +31,8 @@ export type {
 // Executor
 export {
   executeDeployCalls,
+  maskCommand,
+  maskVariables,
   outputExecutionPlan,
   summarizeResults,
 } from './nopy.executor.js';
@@ -60,14 +65,7 @@ export {
 } from './nopy.prompts.js';
 export type { AuthSession, CubeSession, NopySession } from './nopy.session.js';
 // Session management
-export {
-  createSession,
-  filterInternalVariables,
-  listSessions,
-  loadSession,
-  saveSession,
-  separateEnvAndCubeVariables,
-} from './nopy.session.js';
+export { createSession, listSessions, loadSession, saveSession } from './nopy.session.js';
 export type { WorkflowOptions, WorkflowResult } from './nopy.workflow.js';
 // Workflow
 export {

@@ -6,34 +6,37 @@
  * @module cubes
  */
 
-// Dependencies
-export { BuildContext } from './dependencies.js';
-// Factory functions
-export {
-  createManifest,
-  manifest,
-} from './factories.js';
-// Loader
-export {
-  findCubeDirectories,
-  getCube,
-  loadCubes,
-} from './loader.js';
+// The authoring surface lives in its own package so that a cube bundle can
+// depend on it without pulling the CLI in. Re-exported here so that
+// `import { cubes } from '@bitsquare/nopy'` in a manifest keeps working.
 export type {
   AnyObjectSchema,
+  CubeSource,
   CubeVariables,
   DependencySpec,
   Hook,
   HookContext,
   LoadResult,
-} from './types.js';
-// Types
+} from '@bitsquare/nopy-cube';
 export {
   Cube,
+  createManifest,
   Manifest,
+  manifest,
+  uniqid,
   zodInner,
   zodKind,
-} from './types.js';
-
-// Utilities
-export { uniqid } from './utils.js';
+} from '@bitsquare/nopy-cube';
+// Dependencies
+export { BuildContext } from './dependencies.js';
+// Loader
+export type { CubeRoot } from './loader.js';
+export {
+  findCubeDirectories,
+  findCubeRoots,
+  getCube,
+  loadCubes,
+} from './loader.js';
+// Packages
+export type { CubePackage } from './packages.js';
+export { resolveCubePackages } from './packages.js';

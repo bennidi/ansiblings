@@ -8,7 +8,12 @@ import { BuildContext } from './cubes/dependencies.js';
 import { loadCubes } from './cubes/index.js';
 import { Variables } from './nopy.common.js';
 import { getConfigPaths, loadConfig } from './nopy.config.js';
-import { type ExecutionResult, executeDeployCalls, summarizeResults } from './nopy.executor.js';
+import {
+  type ExecutionResult,
+  executeDeployCalls,
+  maskCommand,
+  summarizeResults,
+} from './nopy.executor.js';
 import { addToHistory, DEFAULT_HISTORY_SIZE } from './nopy.history.js';
 import { type NopySession, saveSession } from './nopy.session.js';
 import { runWorkflow } from './nopy.workflow.js';
@@ -72,6 +77,9 @@ function printActiveConfig(
 
   if (config.hosts.length > 0) lines.push(`  Hosts:       ${config.hosts.join(', ')}`);
   if (config.cubeDirs.length > 0) lines.push(`  Cube dirs:   ${config.cubeDirs.join(', ')}`);
+  if (config.cubePackages.length > 0) {
+    lines.push(`  Cube pkgs:   ${config.cubePackages.map((ref) => ref.spec).join(', ')}`);
+  }
   if (opts.continueOnError) lines.push('  Execution:   continue-on-error');
 
   const envEntries = Object.entries(config.env);
@@ -185,7 +193,7 @@ export async function nopy(opts: NopyOptions = {}): Promise<NopyResult | undefin
   const sessionForSaving: NopySession = {
     ...workflow.session,
     cubes: context.cubeSessions,
-    env: variables.get('global'),
+    env: config.env,
   };
 
   if (saveSessionPath && !workflow.isReplay) {
@@ -203,7 +211,7 @@ export async function nopy(opts: NopyOptions = {}): Promise<NopyResult | undefin
     console.log('\n  Deploy Commands\n  ───────────────\n');
     for (const call of context.deployCalls) {
       console.log(`  # ${call.cube} -> ${call.host}`);
-      console.log(`  ${call.command.join(' ')}\n`);
+      console.log(`  ${maskCommand(call)}\n`);
     }
     return {
       success: true,

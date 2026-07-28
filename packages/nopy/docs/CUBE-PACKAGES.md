@@ -1,6 +1,11 @@
 # Cube bundles as npm packages
 
-Status: **Phase 0 has landed; Phases 1–6 are still a plan, not a record.**
+Status: **All six phases have landed. This document is now a record, not a plan.**
+The one thing still unproven is the publish lane against a real registry — see
+*Risks*.
+`cubePackages` resolves and loads end to end, `@bitsquare/nopy-cube` exists and
+the publish lane can ship a linked package. What is missing is a bundle to point
+`cubePackages` at.
 
 Distributing cubes as npm packages so a project can `pnpm add @acme/cubes-net`
 and have its cubes show up in `nopy` alongside local ones.
@@ -166,7 +171,7 @@ Rules:
 - A bundle must not ship a `.nopyrc.json`. Config discovery walks up from
   `process.cwd()`, never from cube directories, so it would never be read.
 
-## Phase 2 — resolution
+## Phase 2 — resolution — **done**
 
 ### Config surface
 
@@ -271,7 +276,7 @@ it is exported from `src/cubes/index.ts` and covered by tests. The
 `node_modules` skip inside `scanDirectory` stays and is now *correct*: a
 bundle's own `node_modules` should not be scanned.
 
-## Phase 3 — hard errors with attribution
+## Phase 3 — hard errors with attribution — **done**
 
 `Cube` gains a source, as an optional fourth constructor parameter so the public
 signature stays backwards compatible:
@@ -306,7 +311,7 @@ claim the same id they are mutually exclusive, and the fix is upstream.
 Surface the source in the interactive picker and in `--json` output so a user can
 see where a cube came from before running it.
 
-## Phase 4 — `@bitsquare/nopy-cube`, the authoring package
+## Phase 4 — `@bitsquare/nopy-cube`, the authoring package — **done**
 
 The problem: a manifest does `import { cubes } from '@bitsquare/nopy'`, resolved
 by ordinary Node resolution from the manifest's own directory. From inside
@@ -350,20 +355,33 @@ already coverage-excluded barrels — so `import { cubes } from '@bitsquare/nopy
 in every existing manifest keeps working unchanged. Nothing in `cubes/` has to be
 touched at migration time.
 
-Repo plumbing this requires:
+`cubes/types.ts` and `cubes/factories.ts` moved wholesale, with
+`tests/cubes.types.test.ts` and `tests/cubes.factories.test.ts` behind them.
+`tests/helpers/foreign-zod.ts` is duplicated rather than shared — fifteen lines,
+and the alternative is a test-only dependency edge between the packages.
 
-- `tsconfig.base.json`: add `"@bitsquare/nopy-cube": ["./packages/nopy-cube/src"]`
-  to `paths`.
-- Root `tsconfig.json`: add the project reference.
-- `packages/nopy/tsconfig.json`: `references` is currently `[]` — add
-  `{ "path": "../nopy-cube" }`. This is the first reference edge in the repo, so
-  `tsc --build` ordering starts mattering.
+Repo plumbing it took:
+
+- `tsconfig.base.json`: `"@bitsquare/nopy-cube": ["./packages/nopy-cube/src"]`.
+- Root `tsconfig.json` and `packages/nopy/tsconfig.json`: the project reference.
+  This is the first reference edge in the repo, and it broke the gate
+  immediately: **`tsc --build --noEmit` is not legal once a project has
+  references** — TS6310, "referenced project may not disable emit", because a
+  composite project has to emit the declarations its dependents read. The root
+  `typecheck` script is now plain `tsc --build`. It still fails on a type error,
+  and it now also proves the build works; the cost is that it writes `dist`,
+  which is gitignored.
 - `packages/nopy/package.json`: `"@bitsquare/nopy-cube": "workspace:*"`.
-- A `vitest.config.ts` for the new package with the same thresholds. `Manifest()`,
-  `Manifest.create()` and `Cube.getDefaults()` all carry logic, so the relevant
-  cases move over from `tests/cubes.factories.test.ts`.
+- `packages/nopy/vitest.config.ts`: a `resolve.alias` for `@bitsquare/nopy-cube`
+  pointing at `../nopy-cube/src/index.ts`. Without it the workspace link
+  resolves through `exports` to `dist`, so `pnpm test` on a clean checkout would
+  fail until something had built it, and a stale `dist` would silently be what
+  the tests ran against. The same config excludes `**/nopy-cube/**` from
+  coverage — the aliased files were being counted against nopy's thresholds.
+- A `vitest.config.ts` for the new package with the same thresholds. It sits at
+  100 % statements/functions/lines, 91 % branches.
 
-### The release lane needs fixing first
+### The release lane needed fixing first
 
 This is the part that is easy to miss. `link-workspace-packages` is unset and
 pnpm 10+ defaults it to `false`, so a plain semver range would resolve
@@ -389,10 +407,40 @@ Pick one before publishing anything:
   passes — compute every snapshot version first, then publish — so `nopy` can pin
   the exact `nopy-cube` snapshot from the same run.
 
-Recommendation: `pnpm publish`, and verify against the Gitea registry with a
+**Measured, both directions.** `npm pack` in `packages/nopy` produces a tarball
+whose manifest still reads `"@bitsquare/nopy-cube": "workspace:*"`; `pnpm pack`
+produces one that reads `"1.0.0-alpha0"`. So the failure was real and the fix
+works.
+
+Went with `pnpm publish --ignore-scripts --no-git-checks` in both workflows.
+`--no-git-checks` is not optional in either: `release.yml` runs on a detached
+HEAD, and `publish-snapshot.yml` dirties the tree by stamping versions.
+(`pnpm pack` has no `--ignore-scripts`, only `pnpm publish` does.)
+
+Three small scripts carry the parts that are easy to get wrong, all runnable
+locally:
+
+- **`scripts/verify-pack.mjs`** — packs every publishable package and fails if a
+  `workspace:` range survived into the tarball. Runs between build and publish
+  in both workflows. Turns "npm would have shipped a broken manifest" from an
+  install-time surprise into a red run.
+- **`scripts/publish-order.mjs`** — topologically sorts the publishable packages.
+  `packages/*/` alphabetically puts `nopy` ahead of the `nopy-cube` it depends
+  on; the snapshot workflow now iterates this instead.
+- **`scripts/linked-deps.mjs`** — lists a package's workspace links as
+  `<name> <version>`, resolved by package name rather than by directory.
+  `release.yml` uses it to refuse a release whose linked dependency is not on
+  npmjs yet, which is the one mistake that cannot be taken back after 72 hours.
+
+`publish-snapshot.yml` also became two passes over the packages: stamp every
+version first, then publish. `pnpm publish` substitutes the version the linked
+package declares *at pack time*, so `nopy-cube` has to be carrying its snapshot
+version before `nopy` is packed.
+
+Still unverified: none of this has run against the Gitea registry. Worth a
 throwaway version before the first real release.
 
-### Also: the resolve hook
+### Also: the resolve hook — built
 
 Independent of the split, and worth building anyway — it retires the
 `ERR_MODULE_NOT_FOUND` gotcha CLAUDE.md documents for the local `cubes/` tree,
@@ -414,33 +462,48 @@ Falling back for `zod` hands local cubes the *CLI's* zod instance, so no
 duplication arises there. Bundles are the case that duplicates it, and Phase 0.4
 is what makes that safe.
 
-New `packages/nopy/src/nopy.resolve-hook.mjs`, registered once from `loadCubes()`
+`packages/nopy/src/cubes/resolve-hook.mjs`, registered once from `loadCubes()`
 before the first `import(manifestPath)`:
 
 ```ts
-module.register('./nopy.resolve-hook.mjs', import.meta.url, {
-  data: { fallback: import.meta.resolve('./index.js') },
-});
+module.register('./resolve-hook.mjs', import.meta.url, { data: { from: import.meta.url } });
 ```
 
-The hook tries `next(specifier, ctx)` **first** and only falls back to the
-running CLI's own copy on failure. That ordering matters: a consumer that has its
-own `@bitsquare/nopy` installed keeps using it, so the hook never silently
-introduces version skew.
+`from` is a URL inside the running CLI's own package; the hook thread builds a
+`createRequire` from it and resolves the fallbacks out of the CLI's own
+dependencies.
 
-Constraints:
+The hook tries `next(specifier, ctx)` **first** and only falls back on failure.
+That ordering matters: a consumer that has its own copy installed keeps using
+it, so the hook never silently introduces version skew. There is a test for
+exactly that — a stub `zod` beside the cube wins over the CLI's real one.
 
-- `module.register()` is process-global and cannot be undone. Install it once,
-  behind a module-level guard.
+Constraints, as built:
+
+- `module.register()` is process-global and cannot be undone. Installed once,
+  behind a module-level guard, and wrapped in a `try` — the hook is a
+  convenience, so a registration failure must not abort a run.
 - The hook file runs on a separate thread; the `data` payload must be
   structured-cloneable (a string URL is).
-- The `.mjs` must ship in `dist` and be listed in `files` — it already is, via
-  the `dist` entry.
-- It resolves `@bitsquare/nopy` and `zod`, not `@bitsquare/nopy-cube`. Bundles
-  never depend on the hook; only the in-repo `cubes/` tree and hand-written local
-  cubes do.
+- The `.mjs` has to reach `dist`, and `tsc` does not copy it: nopy's `build` is
+  now `tsc && cp src/cubes/*.mjs dist/cubes/`. `files` already covers it via the
+  `dist` entry.
+- It covers **three** specifiers, not the two the plan named: `zod`,
+  `@bitsquare/nopy`, and `@bitsquare/nopy-cube` — a hand-written local cube is
+  as entitled to the new authoring package as to the old one. Subpaths count
+  (`@bitsquare/nopy/package.json`), anything else stays a hard failure.
 
-## Phase 5 — proof of concept: `packages/cubes-core`
+**The tests have to spawn a real `node`.** Written inside the vitest worker they
+pass whether or not the hook is installed: vite resolves the dynamic import
+itself and finds `zod` from the project root. `tests/cubes.resolve-hook.test.ts`
+therefore runs each case in a child process, and the first case asserts the
+*failure* without the hook so the rest cannot silently stop proving anything.
+
+**Verified end to end.** From a plain `node` at the repo root, with nothing
+linked, the built loader reads all 22 cubes under `cubes/` with zero errors. The
+`ERR_MODULE_NOT_FOUND` gotcha in `CLAUDE.md` is retired.
+
+## Phase 5 — proof of concept: `packages/cubes-core` — **done**
 
 Depends on Phase 4 shipping first — the bundle cannot declare
 `@bitsquare/nopy-cube` as a dependency until it exists, and the publish-lane fix
@@ -478,19 +541,50 @@ has to be in place before either package is published.
    `nopy-cube` references from Phase 4 are separate.)
 8. Biome already lints `cubes/**/*.mjs` from the root; only the path changes.
 
-### Verifying the PoC
+### What differed from the plan
 
-- **In-workspace:** `pnpm --filter @bitsquare/nopy run nopy -P` from the repo
-  root lists `net:tailscale`, `apt:install`, … and prints deploy commands whose
-  `--chdir` points into `node_modules/@bitsquare/cubes-core/cubes/…`.
-- **Out-of-workspace (the real test):** `npm pack` the bundle, install the
-  tarball into a throwaway directory with a `.nopyrc.json` naming it, install
-  `nopy` *globally*, and run `nopy -P`. This is what actually exercises Phase 4 —
-  a manifest resolving its import from a `node_modules` tree that has no
-  `@bitsquare/nopy` in it. Check the installed tarball's `package.json` really
-  carries a concrete `@bitsquare/nopy-cube` range and not `workspace:*`.
+- **Step 2's optional migration was done.** All 22 manifests now import
+  `{ Manifest }` from `@bitsquare/nopy-cube`, not `{ cubes }` from
+  `@bitsquare/nopy`. Optional for correctness, but it is the only version of the
+  PoC that proves anything: leaving the old import in place would have resolved
+  through the CLI that happens to sit in the same tree.
+- **`uniqid` had to move too.** Two manifests use it (`admin:hostname` bare,
+  `user:add` via `cubes.uniqid`), so `src/cubes/utils.ts` and its test went to
+  `nopy-cube` alongside `types.ts`, and `uniqid` joined the authoring barrel.
+  Otherwise one migrated manifest would still have been importing the CLI.
+- **`files` needs a log exclusion.** Cubes that have been run leave a gitignored
+  `pyinfra-debug.log` next to `deploy.py`; gitignore does not filter an npm
+  tarball. `"files": ["cubes", "!cubes/**/*.log", …]` does. Verified: 22
+  manifests, 22 deploy scripts, 0 logs in the packed artefact.
+- **`verify-pack.mjs` picks the bundle up for free** — it walks every non-private
+  `packages/*`, so `cubes-core`'s `workspace:*` edge is checked like nopy's.
 
-## Phase 6 — documentation
+### Verifying the PoC — done
+
+- **In-workspace:** the built loader, run from the repo root against the new
+  root `.nopyrc.json`, reads 22 cubes with 0 errors and reports
+  `source: { type: 'package', packageName: '@bitsquare/cubes-core', dir:
+  '…/node_modules/@bitsquare/cubes-core/cubes' }` — the pnpm symlink path, not a
+  plain directory.
+- **Out-of-workspace (the real test):** `pnpm pack` for `nopy-cube`, `nopy` and
+  `cubes-core`, then **`npm install`** of all three tarballs into a throwaway
+  directory with a `.nopyrc.json` naming only the bundle. npm is the strict test
+  here — it does not understand `workspace:`, so a leaked range fails the install
+  outright. It installed clean, and the installed
+  `@bitsquare/nopy/package.json` carries `"@bitsquare/nopy-cube":
+  "1.0.0-alpha0"`. `nopy install -l session.json -P -D` then resolved
+  `apt:essentials` and printed a `--chdir` into
+  `node_modules/@bitsquare/cubes-core/cubes/apt/essentials`. Since the loader
+  aborts on any manifest error and this run did not, all 22 manifests imported
+  `@bitsquare/nopy-cube` and `zod` successfully from a tree containing no
+  workspace links.
+
+  Note for anyone repeating this: `-P` on its own is interactive, and a replay
+  still prompts for anything a manifest declares in `secrets` (they are never
+  persisted to a session) — `net:tailscale` will sit there waiting. Use a
+  session file with a cube that has no secrets, or answer the prompt.
+
+## Phase 6 — documentation — **done**
 
 - `CLAUDE.md`: the repo table gains two rows (`packages/nopy-cube`,
   `packages/cubes-core`) and loses the `cubes/` one; "The two packages do not
@@ -502,6 +596,21 @@ has to be in place before either package is published.
 - `README.PUBLISH.md`: `nopy-cube-v*` and `cubes-core-v*` as new tag prefixes,
   plus the ordering constraint — `nopy-cube` releases before anything that
   depends on it.
+
+Beyond the list: `CLAUDE.md` also needed the `typecheck` command corrected
+(`tsc --build`, not `--noEmit` — see Phase 4), a note on the vitest source alias
+and the coverage exclusion, and three entries under *Known drift*. `README.PUBLISH.md`
+absorbed the whole publish-lane rework, not just the tag prefixes: `pnpm publish`
+over `npm publish` and why, the two-pass version stamping, `verify-pack.mjs`,
+`publish-order.mjs`, `linked-deps.mjs`, and a local rehearsal recipe that uses
+**npm** to install the tarballs precisely because npm is the one that rejects a
+leaked `workspace:` range.
+
+One workflow change came out of writing this up: `ci.yml` now runs
+`verify-pack.mjs` too. It was only in the two publish workflows, which means a
+leaked range would have failed the release rather than the pull request that
+introduced it — the wrong end of the process for a mistake that is free to catch
+early.
 
 ## Testing
 

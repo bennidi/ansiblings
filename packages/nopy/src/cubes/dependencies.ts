@@ -3,13 +3,13 @@
  * @module cubes/dependencies
  */
 
+import type { Cube, CubeVariables, HookContext } from '@bitsquare/nopy-cube';
 import { getLogger } from '@logtape/logtape';
 import type { Variables } from '../nopy.common.js';
 import type { NopyConfig } from '../nopy.config.js';
 import type { DeployCall } from '../nopy.executor.js';
 import { VariableAssignment } from '../nopy.prompts.js';
 import type { CubeSession, NopySession } from '../nopy.session.js';
-import type { Cube, CubeVariables, HookContext } from './types.js';
 
 const log = getLogger(['nopy', 'resolution']);
 
@@ -38,6 +38,12 @@ export class BuildContext {
     } = {}
   ) {}
 
+  /** Required schema keys that nothing has supplied a value for. */
+  private missingRequired(cube: Cube): string[] {
+    const resolved = this.variables.get(cube.id);
+    return cube.requiredKeys().filter((key) => resolved[key] === undefined);
+  }
+
   /**
    * Fails a non-interactive run that cannot fill a required variable.
    *
@@ -45,8 +51,7 @@ export class BuildContext {
    * `--data`, and the deploy script would read `None` off `host.data`.
    */
   private assertVariablesComplete(cube: Cube): void {
-    const resolved = this.variables.get(cube.id);
-    const missing = cube.requiredKeys().filter((key) => resolved[key] === undefined);
+    const missing = this.missingRequired(cube);
     if (missing.length === 0) return;
 
     const [one, them] =
@@ -56,6 +61,43 @@ export class BuildContext {
         `Set ${them} under "env" in .nopyrc.json, pass ${them} from a dependency, ` +
         'or drop --use-defaults to be prompted.'
     );
+  }
+
+  /**
+   * Asks for the variables a replay cannot supply on its own.
+   *
+   * Two kinds. Required keys can be absent because the session predates them or
+   * was recorded by a `--use-defaults` run. Secrets are absent by design: they
+   * are never written to a session, so replaying without asking would deploy a
+   * cube with the key missing — or, for a secret carrying a default, with a
+   * value silently different from the run being replayed.
+   *
+   * Secrets are asked for even when a default did fill them in, which is why
+   * this cannot key off "has no value": the whole point is that the recorded
+   * answer is gone and only the user knows what it was.
+   */
+  private async fillSessionGaps(cube: Cube): Promise<void> {
+    const gaps = [...new Set([...this.missingRequired(cube), ...cube.secrets])];
+    if (gaps.length === 0) return;
+
+    if (this.options.useDefaults) {
+      throw new Error(
+        `Cube "${cube.id}" cannot be replayed with --use-defaults: ${gaps.join(', ')} ` +
+          'would have to be entered. Secrets are never recorded in a session. ' +
+          'Replay without --use-defaults, or set the values under "env" in .nopyrc.json.'
+      );
+    }
+
+    log.debug('Filling session gaps', { cubeId: cube.id, gaps });
+    await VariableAssignment(cube, this.variables, { keys: gaps });
+
+    // A cancelled form leaves the run short of a value it cannot invent.
+    const stillMissing = this.missingRequired(cube);
+    if (stillMissing.length > 0) {
+      throw new Error(
+        `Cube "${cube.id}" is missing ${stillMissing.join(', ')} and cannot be deployed.`
+      );
+    }
   }
 
   /**
@@ -73,20 +115,22 @@ export class BuildContext {
 
     log.debug('Resolving cube', { cubeId, host });
 
-    // 1. Assign overrides and defaults
+    // 1. Declare secrets, then assign overrides and defaults. Declaring first
+    //    means even the config `env` seeded on the cube's first assignment is
+    //    already marked, so nothing reaches a session or a log unredacted.
+    this.variables.declareSecrets(cubeId, cube.secrets);
     if (Object.keys(overrides).length > 0) {
-      this.variables.assign(cubeId, 'params', overrides);
+      this.variables.assign(cubeId, 'param', overrides);
     }
-    this.variables.assign(cubeId, 'defaults', cube.getDefaults());
+    this.variables.assign(cubeId, 'default', cube.getDefaults());
 
     // 2. Variable collection
     if (this.options.isSessionReplay) {
-      // Recorded answers go back into the scope they came from, so a replay
-      // reproduces them even when `env` sets the same key to something else.
       const sessionCube = this.session.cubes.find((c) => c.key === cubeId);
       if (sessionCube) {
-        this.variables.assign(cubeId, 'prompts', sessionCube.variables);
+        this.variables.assign(cubeId, 'session', sessionCube.variables);
       }
+      await this.fillSessionGaps(cube);
     } else if (this.options.useDefaults) {
       log.debug('Skipping prompts, using defaults', { cubeId });
       this.assertVariablesComplete(cube);
@@ -155,13 +199,18 @@ export class BuildContext {
       cwd: cube.dir,
       command,
       env: cubeVars,
+      secrets: cube.secrets,
       dependencies: [],
     });
 
     if (!this.cubeSessions.some((s) => s.key === cubeId)) {
+      // Every value the run settled on, not just the prompted ones — otherwise a
+      // `--use-defaults` run records nothing and replaying it re-derives from
+      // whatever the defaults and `env` happen to say now. Secrets are the one
+      // exclusion; a replay asks for those again.
       this.cubeSessions.push({
         key: cubeId,
-        variables: this.variables.get(cubeId, 'prompts'),
+        variables: this.variables.persistable(cubeId),
       });
     }
 

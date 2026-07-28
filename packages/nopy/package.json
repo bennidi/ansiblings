@@ -43,7 +43,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist .tsbuildinfo",
-    "build": "tsc",
+    "build": "tsc && cp src/cubes/*.mjs dist/cubes/",
     "prepack": "pnpm run build",
     "link:local": "pnpm run build && npm link",
     "nopy": "tsx src/nopy.cli.ts",
@@ -54,6 +54,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@bitsquare/nopy-cube": "workspace:*",
     "@logtape/logtape": "^2.2.4",
     "commander": "^15.0.0",
     "enquirer": "^2.4.1",

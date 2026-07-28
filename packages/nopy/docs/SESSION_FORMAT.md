@@ -294,8 +294,9 @@ export default {
 2. **Document your cubes** - Add comments explaining what each cube does
 3. **Use environment variables** - Make sessions reusable across environments
 4. **Extract common config** - Share configuration across multiple sessions
-5. **Version control** - Both formats work well with git
+5. **Version control** - Both formats work well with git, but a recorded session holds every value its run used; read one before committing it
 6. **Validate at runtime** - The loader validates the structure regardless of format
+7. **Leave secrets out** - Declare them in the manifest instead, and let the replay ask
 
 ## Session Schema
 
@@ -321,3 +322,16 @@ interface AuthSession {
   username?: string;
 }
 ```
+
+A session nopy *writes* holds, per cube, every value that cube ran with — what
+was typed, what came from `.nopyrc.json`, what a dependency supplied, and what
+fell through to the schema's `.default()`. Two things are deliberately absent and
+are asked for again on replay: the SSH password, and any key the cube's manifest
+listed under `secrets`.
+
+A session you write by hand is under no such obligation — `variables` may hold as
+few keys as you like, and anything missing resolves the usual way. Note that a
+key declared a secret is prompted for whether or not the session carries a value:
+writing one in only pre-fills the prompt, it does not skip it. The variable form
+shows what it is editing, so a secret you put in a session file appears on screen
+as well as on disk.

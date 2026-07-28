@@ -37,7 +37,7 @@ vi.mock('enquirer', () => ({
   },
 }));
 
-import { Cube, Manifest } from '../src/cubes/types.js';
+import { Cube, Manifest } from '@bitsquare/nopy-cube';
 import { Variables } from '../src/nopy.common.js';
 import {
   AuthSelection,
@@ -227,7 +227,7 @@ describe('VariableAssignment', () => {
 
   it('does nothing when every default is already supplied as a param', async () => {
     const variables = new Variables();
-    variables.assign('svc', 'params', { port: 1, enabled: true, name: 'x' });
+    variables.assign('svc', 'param', { port: 1, enabled: true, name: 'x' });
 
     await VariableAssignment(cube('svc', 'Service', schema), variables);
 
@@ -240,25 +240,30 @@ describe('VariableAssignment', () => {
     expect(formRun).not.toHaveBeenCalled();
   });
 
-  it('only asks about the variables still missing', async () => {
+  it('leaves out a key a dependency already supplied', async () => {
     const variables = new Variables();
-    variables.assign('svc', 'params', { port: 9090 });
+    variables.assign('svc', 'param', { port: 9090 });
     formRun.mockResolvedValue({});
 
     await VariableAssignment(cube('svc', 'Service', schema), variables);
 
-    expect(formRun).toHaveBeenCalled();
-    expect(variables.get('svc', 'prompts')).toEqual({});
+    expect(formChoices().map((c) => c.name)).toEqual(['enabled', 'name']);
   });
 
   it('asks about a field that declares no default, with an empty initial value', async () => {
-    const required = z.object({
-      SSID: z.string().describe('Network name'),
-      PRIORITY: z.number().default(10),
-    });
+    const wifi = cube(
+      'wifi',
+      'WiFi',
+      z.object({
+        SSID: z.string().describe('Network name'),
+        PRIORITY: z.number().default(10),
+      })
+    );
+    const variables = new Variables();
+    variables.assign('wifi', 'default', wifi.getDefaults());
     formRun.mockResolvedValue({});
 
-    await VariableAssignment(cube('wifi', 'WiFi', required), new Variables());
+    await VariableAssignment(wifi, variables);
 
     expect(formChoices()).toEqual([
       { name: 'SSID', message: 'Network name', initial: '' },
@@ -267,12 +272,25 @@ describe('VariableAssignment', () => {
   });
 
   it('offers the value the run would use, not the bare schema default', async () => {
+    const svc = cube('svc', 'Service', schema);
     const variables = new Variables({ port: 2222 });
+    variables.assign('svc', 'default', svc.getDefaults());
     formRun.mockResolvedValue({});
 
-    await VariableAssignment(cube('svc', 'Service', schema), variables);
+    await VariableAssignment(svc, variables);
 
     expect(formChoices().find((c) => c.name === 'port')?.initial).toBe('2222');
+  });
+
+  it('asks only about the given keys', async () => {
+    const svc = cube('svc', 'Service', schema);
+    const variables = new Variables();
+    variables.assign('svc', 'default', svc.getDefaults());
+    formRun.mockResolvedValue({});
+
+    await VariableAssignment(svc, variables, { keys: ['name'] });
+
+    expect(formChoices()).toEqual([{ name: 'name', message: 'name', initial: 'svc' }]);
   });
 
   it('coerces answers using the schema and stores them under prompts', async () => {
@@ -281,7 +299,7 @@ describe('VariableAssignment', () => {
 
     await VariableAssignment(cube('svc', 'Service', schema), variables);
 
-    expect(variables.get('svc', 'prompts')).toEqual({
+    expect(variables.get('svc')).toEqual({
       port: 9090,
       enabled: true,
       name: 'api',
@@ -294,8 +312,8 @@ describe('VariableAssignment', () => {
 
     await VariableAssignment(cube('svc', 'Service', schema), variables);
 
-    expect(variables.get('svc', 'prompts').port).toBe('not-a-number');
-    expect(variables.get('svc', 'prompts').enabled).toBe(false);
+    expect(variables.get('svc').port).toBe('not-a-number');
+    expect(variables.get('svc').enabled).toBe(false);
   });
 
   it('accepts yes and 1 as truthy booleans', async () => {
@@ -304,7 +322,7 @@ describe('VariableAssignment', () => {
 
     await VariableAssignment(cube('svc', 'Service', schema), variables);
 
-    expect(variables.get('svc', 'prompts').enabled).toBe(true);
+    expect(variables.get('svc').enabled).toBe(true);
   });
 
   it('unwraps optional and nullable schema types', async () => {
@@ -318,7 +336,7 @@ describe('VariableAssignment', () => {
 
     await VariableAssignment(cube('svc', 'Service', nullableSchema), variables);
 
-    expect(variables.get('svc', 'prompts')).toEqual({ maybe: null, opt: 7, given: 42 });
+    expect(variables.get('svc')).toEqual({ maybe: null, opt: 7, given: 42 });
   });
 
   it('treats an empty string as null for a nullable field', async () => {
@@ -328,7 +346,7 @@ describe('VariableAssignment', () => {
 
     await VariableAssignment(cube('svc', 'Service', nullableSchema), variables);
 
-    expect(variables.get('svc', 'prompts').maybe).toBe(null);
+    expect(variables.get('svc').maybe).toBe(null);
   });
 
   it('passes non-string answers through untouched', async () => {
@@ -337,7 +355,7 @@ describe('VariableAssignment', () => {
 
     await VariableAssignment(cube('svc', 'Service', schema), variables);
 
-    expect(variables.get('svc', 'prompts').port).toBe(9090);
+    expect(variables.get('svc').port).toBe(9090);
   });
 
   it('keeps answers for keys the schema does not describe', async () => {
@@ -346,7 +364,7 @@ describe('VariableAssignment', () => {
 
     await VariableAssignment(cube('svc', 'Service', schema), variables);
 
-    expect(variables.get('svc', 'prompts').extra).toBe('kept');
+    expect(variables.get('svc').extra).toBe('kept');
   });
 
   it('assigns nothing when the user cancels the form', async () => {
@@ -356,7 +374,7 @@ describe('VariableAssignment', () => {
     await expect(
       VariableAssignment(cube('svc', 'Service', schema), variables)
     ).resolves.toBeUndefined();
-    expect(variables.get('svc', 'prompts')).toEqual({});
+    expect(variables.get('svc')).toEqual({});
   });
 
   it('coerces against a schema built by a different copy of zod', async () => {
@@ -380,6 +398,6 @@ describe('VariableAssignment', () => {
       variables
     );
 
-    expect(variables.get('svc', 'prompts')).toEqual({ port: 9090, enabled: true, maybe: null });
+    expect(variables.get('svc')).toEqual({ port: 9090, enabled: true, maybe: null });
   });
 });

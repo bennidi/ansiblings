@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": ".tsbuildinfo",
+    "outDir": "dist",
+    "rootDir": "src",
+    "lib": ["ES2020"],
+    "composite": true,
+    "module": "NodeNext",
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["coverage", "node_modules", "dist"],
+  "references": []
+}

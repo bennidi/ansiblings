@@ -81,6 +81,13 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Verify the packed manifests
+        # `workspace:*` is mandatory in the manifests but meaningless to npm, so
+        # a range that survives into a tarball is an install failure for every
+        # consumer. The publish workflows run this too; running it here is what
+        # puts the failure on the pull request instead of on the release.
+        run: node scripts/verify-pack.mjs
+
       - name: Upload coverage reports
         if: always()
         continue-on-error: true

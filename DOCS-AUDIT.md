@@ -16,7 +16,9 @@ state.
 
 Findings closed since are marked **✅ … fixed** and keep their original text as
 the record of what was wrong. So far: §1.1 (`--use-defaults`), §2.2
-(`getDefaults()`), half of §2.1 (precedence), and one bullet of §6.4.
+(`getDefaults()`), §2.1 (precedence — the second half closed differently than
+proposed), §4.2 (password on stdout — points 1 and 2 of 3), §4.3 (what a session
+records), part of §3.5 (dead exports), and one bullet of §6.4.
 
 ---
 
@@ -138,14 +140,22 @@ dependency detected".
 
 ## 2. Documented behaviour that differs from the code
 
-### 2.1 🟡 Variable precedence is wrong in both directions — **partly fixed**
+### 2.1 ✅ Variable precedence is wrong in both directions — **fixed**
 
-> **Half resolved.** `env` now outranks the Zod defaults, as documented — this
-> was a prerequisite for `--use-defaults` being configurable at all. The second
-> pair was deliberately left: dependency/hook params still outrank prompts. In
-> practice they do not compete, because `VariableAssignment` leaves out any key
-> a dependency already supplied, so the operator is never asked about it. The
-> README now describes that rather than the old claim.
+> **Resolved, though the second pair closed the opposite way to the README's
+> original claim.** `env` now outranks the Zod defaults, as documented — that was
+> a prerequisite for `--use-defaults` being configurable at all.
+>
+> Dependency/hook params still outrank prompts, deliberately. They do not compete
+> in practice: `VariableAssignment` leaves out any key a dependency supplied, so
+> the operator is never asked about it and there is no typed value to override.
+> The README documents the real order rather than the old promise.
+>
+> The underlying complaint — that precedence was the field order of an object
+> literal and so could be neither named nor questioned — is what
+> `docs/REFACTORING.md` item 6 addresses. `Origin` now ranks
+> `default < env < session < prompt < param` as data, and every value carries the
+> origin it came from.
 
 `README.md:107-113` stated:
 
@@ -185,6 +195,12 @@ Two pairs are inverted, and both have consequences:
 > schema key rather than only the defaulted ones; and `--use-defaults` refuses
 > to deploy a cube whose required key nothing supplied. Verified against all 22
 > cubes in `cubes/`: 19 build a complete `-D` run, the 3 below abort by name.
+>
+> Re-measured against the 25 cubes now in `packages/cubes-core/cubes`: 20 build a
+> complete `-D` run and 5 abort by name. Two of the additions are deliberate —
+> `user:add` lost its `PUBKEY` default (it was a specific personal key), and
+> `ssh:keygen` inherits that failure because it declares `dependencies: () =>
+> ['user:add']` and passes no parameters. See §6.6.
 
 `README.md:99` states it outright; `README.md:105` claims defaults ensure "every
 cube has a predictable starting state".
@@ -438,7 +454,11 @@ Public API in `src/index.ts` with no `API.md` entry: the entire history module
 `getHistoryPath`, `formatHistoryList`, `HISTORY_FILE`, `DEFAULT_HISTORY_SIZE`,
 plus `HistoryEntry` / `SessionHistory`), `BuildContext`,
 `runSessionReplayWorkflow`, `getConfigPaths`, `findCubeDirectories`, `getCube`,
-`filterInternalVariables`, `separateEnvAndCubeVariables`.
+~~`filterInternalVariables`, `separateEnvAndCubeVariables`~~ — those last two were
+dead on arrival (nothing called them once the session recorder stopped splitting
+`env` out) and have since been deleted rather than documented. `maskCommand`,
+`maskVariables`, `Variable`, `Variables`, `MASK` and the `Origin` / `Assignment`
+types are newly exported and also have no `API.md` entry.
 
 The CLI cheat-sheet (`API.md:554-578`) omits `-R`, `-H`, `-P`, `--no-history`,
 and the `history` / `clear-history` commands.
@@ -474,7 +494,20 @@ Because `loadCubes` turns each failure into an `errors` entry and `nopy.main.ts:
 aborts when `errors.length > 0`, a fresh clone cannot run a single cube. Neither
 README mentions a setup step.
 
-### 4.2 🟠 The SSH password is printed in plaintext
+### 4.2 🟠 The SSH password is printed in plaintext — **mostly fixed**
+
+> **Points 1 and 2 resolved; point 3 stands.** `maskCommand()`
+> (`nopy.executor.ts`) rewrites the SSH `--password` and every `--data` value the
+> manifest declared a secret, and it is applied at all three places the command
+> string is printed: the debug log, the dry-run plan, and `--print-only`. The
+> name heuristic described in point 2 is gone — the manifest's `secrets` array
+> says which keys are sensitive, so `TOKEN`, `PSK` and `AUTH_KEY` are covered
+> too, and it no longer matters that a key merely *looks* like a password.
+>
+> Point 3 is unchanged and now documented instead: the value still reaches
+> pyinfra on its command line, so it is visible in `ps`. That is inherent to
+> pyinfra's `--data` interface, not something nopy can mask. The shell-quoting
+> concern in the same point is also still open. See `docs/REFACTORING.md` item 7.
 
 Not stated in any document, and it sits directly against the security notes at
 `README.md:217` and `:325` (which are narrowly about *storage*, and are correct
@@ -500,7 +533,18 @@ That string is then:
    visible in the process list and, without quoting, vulnerable to shell
    metacharacters in the password.
 
-### 4.3 🟠 History and session files record only prompted values
+### 4.3 ✅ History and session files record only prompted values — **fixed**
+
+> **Resolved.** `buildDeployCall` records `Variables.persistable(cubeId)` — every
+> value the cube settled on, whatever its origin — so a `--use-defaults` run no
+> longer records an empty object, and a replay reproduces the run rather than
+> re-deriving it from whatever the defaults and `env` say at replay time. The one
+> deliberate exclusion is a key the manifest declared a secret; those are prompted
+> for again on replay, and a `-D` replay that would need one fails by name.
+>
+> The divergence noted at the end of this finding narrows but does not vanish: a
+> dependency graph that resolves differently can still produce a different
+> command, because `param` outranks `session` by design.
 
 `README.md:414` says an entry records "the variable values that were answered at
 the prompts" — accurate, but the consequence is not drawn out.
@@ -670,6 +714,29 @@ the three has to give.
 
 Covered under §1.5. `docs/API.md:160` documents the error; there is no code that
 raises it. Mutually dependent cubes recurse until the stack overflows.
+
+### 6.6 🟠 `ssh:keygen` depends on `user:add` but shares nothing with it
+
+`ssh:keygen` declares `dependencies: () => ['user:add']` with no parameters, so
+the two cubes resolve their `USER` independently:
+
+- `ssh:keygen` defaults `USER` to `vagrant`;
+- `user:add` defaults `USER` to `` user${uniqid(5)} `` — a fresh random name.
+
+So the dependency creates an account the dependent then ignores, and generates a
+key for a `vagrant` user it never created. Passing the value through
+(`[['user:add', {USER}]]`) is what the dependency spec exists for; `param`
+outranks `default`, so it would take effect.
+
+Surfaced by removing `user:add`'s `PUBKEY` default: `ssh:keygen` now fails a `-D`
+run with `Cube "user:add" cannot run with --use-defaults: PUBKEY has no default
+value`, naming a cube the operator did not select. The underlying mismatch is
+older than that change and is not fixed here.
+
+Related: `user:add`'s `USER` default is generated (`` user${uniqid(5)} ``), the
+same shape as the `PASSWORD` default that was removed. It is recorded in the
+session, so replays are stable, but each fresh `-D` run still creates a
+differently-named account.
 
 ---
 

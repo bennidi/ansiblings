@@ -8,12 +8,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createSession,
-  filterInternalVariables,
   listSessions,
   loadSession,
   type NopySession,
   saveSession,
-  separateEnvAndCubeVariables,
 } from '../src/nopy.session.js';
 
 describe('createSession', () => {
@@ -155,58 +153,5 @@ describe('listSessions', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].endsWith('test.session.mjs')).toBe(true);
-  });
-});
-
-describe('filterInternalVariables', () => {
-  it('removes customize key', () => {
-    const input = { customize: true, VAR_A: 'a', VAR_B: 'b' };
-    const result = filterInternalVariables(input);
-
-    expect(result).toEqual({ VAR_A: 'a', VAR_B: 'b' });
-    expect('customize' in result).toBe(false);
-  });
-
-  it('returns empty object for internal-only input', () => {
-    const result = filterInternalVariables({ customize: true });
-    expect(result).toEqual({});
-  });
-
-  it('preserves all non-internal keys', () => {
-    const input = { A: 1, B: 'two', C: true };
-    const result = filterInternalVariables(input);
-    expect(result).toEqual(input);
-  });
-});
-
-describe('separateEnvAndCubeVariables', () => {
-  it('separates env variables from cube variables', () => {
-    const allVars = { ENV_VAR: 'env', CUBE_VAR: 'cube' };
-    const envVars = { ENV_VAR: 'original' };
-
-    const result = separateEnvAndCubeVariables(allVars, envVars);
-
-    expect(result.env).toEqual({ ENV_VAR: 'env' });
-    expect(result.cubeVars).toEqual({ CUBE_VAR: 'cube' });
-  });
-
-  it('handles all env variables', () => {
-    const allVars = { A: 1, B: 2 };
-    const envVars = { A: 0, B: 0 };
-
-    const result = separateEnvAndCubeVariables(allVars, envVars);
-
-    expect(result.env).toEqual({ A: 1, B: 2 });
-    expect(result.cubeVars).toEqual({});
-  });
-
-  it('handles all cube variables', () => {
-    const allVars = { A: 1, B: 2 };
-    const envVars = {};
-
-    const result = separateEnvAndCubeVariables(allVars, envVars);
-
-    expect(result.env).toEqual({});
-    expect(result.cubeVars).toEqual({ A: 1, B: 2 });
   });
 });

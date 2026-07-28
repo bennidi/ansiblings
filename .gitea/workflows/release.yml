@@ -1,10 +1,15 @@
 # Tag-driven release of a single package.
 #
 #   git tag nopy-v1.2.0 && git push origin nopy-v1.2.0
+#   git tag nopy-cube-v1.2.0 && git push origin nopy-cube-v1.2.0
 #   git tag keyman-v1.2.0 && git push origin keyman-v1.2.0
 #
 # The tag is the source of truth for *which* package ships; package.json is the
 # source of truth for the version, and the two must agree or the run fails.
+#
+# Packages that link to each other release dependency-first — `nopy-cube` before
+# `nopy` — because the linked version is resolved at pack time. The run refuses
+# to publish otherwise.
 # A version with a prerelease part (1.2.0-rc.1) publishes under `next` instead
 # of `latest`.
 #
@@ -108,6 +113,31 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Check the linked workspace packages are already released
+        env:
+          NAME: ${{ steps.target.outputs.name }}
+          DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          set -euo pipefail
+          # `pnpm publish` turns `workspace:*` into the version the linked
+          # package declares at this commit. If that version is not on the
+          # registry yet, the release installs to a broken tree — and npmjs
+          # only lets you unpublish for 72 hours. Release the dependency first:
+          # nopy-cube, then nopy, then any bundle.
+          #
+          # npmjs only: it is the irreversible one, and it needs no credentials
+          # to read, which this step does not have yet.
+          missing=0
+          for spec in $(node scripts/linked-deps.mjs "$DIR" | tr ' ' '@'); do
+            if npm view "$spec" version --registry "$NPMJS_REGISTRY" >/dev/null 2>&1; then
+              echo "${spec} is published"
+            else
+              echo "::error::${NAME} depends on ${spec}, which is not on npmjs. Release it first."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Lint
         run: pnpm run lint:ci
 
@@ -120,6 +150,11 @@ jobs:
       - name: Build
         # Explicit, so the publish steps can skip lifecycle scripts entirely.
         run: pnpm run build
+
+      - name: Verify the packed manifests
+        # Packages link to each other with `workspace:*`, which npm cannot
+        # install. Proves on the tarball that pack rewrote it.
+        run: node scripts/verify-pack.mjs
 
       - name: Publish to the Gitea registry
         env:
@@ -139,7 +174,10 @@ jobs:
           if npm view "${NAME}@${VERSION}" version --registry "$GITEA_REGISTRY" >/dev/null 2>&1; then
             echo "${NAME}@${VERSION} is already on Gitea — skipping."
           else
-            (cd "$DIR" && npm publish --ignore-scripts --tag "$DIST_TAG" --registry "$GITEA_REGISTRY")
+            # pnpm, not npm: npm ships `workspace:*` verbatim and the install
+            # then fails with EUNSUPPORTEDPROTOCOL. --no-git-checks because a
+            # tag build is a detached HEAD.
+            (cd "$DIR" && pnpm publish --ignore-scripts --no-git-checks --tag "$DIST_TAG" --registry "$GITEA_REGISTRY")
           fi
 
       - name: Publish to npmjs
@@ -162,7 +200,7 @@ jobs:
           else
             # No --provenance: that needs GitHub Actions OIDC, which Gitea has no
             # equivalent for.
-            (cd "$DIR" && npm publish --ignore-scripts --tag "$DIST_TAG" --access public --registry "$NPMJS_REGISTRY")
+            (cd "$DIR" && pnpm publish --ignore-scripts --no-git-checks --tag "$DIST_TAG" --access public --registry "$NPMJS_REGISTRY")
           fi
 
       - name: Remove the registry credentials

@@ -103,6 +103,36 @@ describe('loader edge cases', () => {
       expect(cubes['no-schema'].getDefaults()).toEqual({});
     });
 
+    it('reports a secrets entry that names no schema key', async () => {
+      // A typo here protects nothing and is invisible at runtime — the value
+      // would simply be persisted.
+      cube(
+        'typo',
+        `import { z } from 'zod';
+         export default { id: 'typo', name: 'Typo', secrets: ['PASSWROD'],
+           schema: z.object({ PASSWORD: z.string().default('x') }) };`
+      );
+
+      const { errors } = await loadCubes();
+
+      expect(errors[0]).toMatch(/'secrets' names PASSWROD, which is not in the schema/);
+    });
+
+    it('accepts a secrets entry that matches a schema key', async () => {
+      cube(
+        'ok',
+        `import { z } from 'zod';
+         export default { id: 'ok', name: 'Ok', secrets: ['PASSWORD'],
+           schema: z.object({ PASSWORD: z.string().default('x') }) };`
+      );
+
+      const { cubes, errors } = await loadCubes();
+
+      expect(errors).toEqual([]);
+      expect(cubes.ok.isSecret('PASSWORD')).toBe(true);
+      expect(cubes.ok.isSecret('OTHER')).toBe(false);
+    });
+
     it('reports a manifest whose default export is not an object', async () => {
       cube('bad-export', 'export default "just a string"');
 
@@ -216,6 +246,91 @@ describe('loader edge cases', () => {
 
       expect(errors).toEqual([]);
       expect(cubes.visible).toBeDefined();
+    });
+  });
+
+  describe('cubePackages', () => {
+    /** Installs a cube package into the temp project's node_modules. */
+    const installPackage = (name: string, cubeId: string) => {
+      const root = path.join(tmpDir, 'node_modules', name);
+      const cubeDir = path.join(root, 'cubes', cubeId);
+      fs.mkdirSync(cubeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name, nopy: { cubes: ['./cubes'] } })
+      );
+      fs.writeFileSync(
+        path.join(cubeDir, 'manifest.mjs'),
+        `export default { id: "${cubeId}", name: "From a package" }`
+      );
+      fs.writeFileSync(path.join(cubeDir, 'deploy.py'), '# deploy');
+      return cubeDir;
+    };
+
+    const config = (extra: Record<string, unknown>) =>
+      fs.writeFileSync(path.join(tmpDir, '.nopyrc.json'), JSON.stringify(extra));
+
+    it('loads cubes from a package and records where they came from', async () => {
+      const cubeDir = installPackage('@acme/cubes-net', 'net:vpn');
+      config({ cubeDirs: [], cubePackages: ['@acme/cubes-net'] });
+
+      const { cubes, errors } = await loadCubes();
+
+      expect(errors).toEqual([]);
+      expect(cubes['net:vpn'].dir).toBe(cubeDir);
+      expect(cubes['net:vpn'].source).toEqual({
+        type: 'package',
+        packageName: '@acme/cubes-net',
+        dir: path.join(tmpDir, 'node_modules', '@acme/cubes-net', 'cubes'),
+      });
+    });
+
+    it('marks a cube found under a plain directory as directory-sourced', async () => {
+      cube('local', 'export default { id: "local", name: "Local" }');
+
+      const { cubes } = await loadCubes();
+
+      expect(cubes.local.source).toEqual({ type: 'dir', dir: tmpDir });
+    });
+
+    it('still skips a node_modules tree nobody asked for', async () => {
+      installPackage('@acme/cubes-net', 'net:vpn');
+      config({ cubeDirs: ['./'] });
+
+      const { cubes, errors } = await loadCubes();
+
+      expect(errors).toEqual([]);
+      expect(cubes['net:vpn']).toBeUndefined();
+    });
+
+    it('names the package and the directory when both claim one id', async () => {
+      installPackage('@acme/cubes-net', 'clash');
+      cube('local', 'export default { id: "clash", name: "Local" }');
+      config({ cubeDirs: ['./'], cubePackages: ['@acme/cubes-net'] });
+
+      const { errors } = await loadCubes();
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/Duplicate cube id 'clash' from 2 sources/);
+      // Labels are padded to a common width, so match the pair, not the gap.
+      expect(errors[0]).toMatch(
+        new RegExp(`^\\s+directory\\s+${path.join(tmpDir, 'local')}$`, 'm')
+      );
+      expect(errors[0]).toMatch(
+        new RegExp(
+          `^\\s+package @acme/cubes-net\\s+${path.join(tmpDir, 'node_modules/@acme/cubes-net/cubes/clash')}$`,
+          'm'
+        )
+      );
+    });
+
+    it('aborts when a named package is not installed', async () => {
+      config({ cubeDirs: [], cubePackages: ['@acme/missing'] });
+
+      const { cubes, errors } = await loadCubes();
+
+      expect(cubes).toEqual({});
+      expect(errors[0]).toMatch(/'@acme\/missing' is not installed/);
     });
   });
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type DeployCall,
   type ExecutionResult,
+  maskCommand,
   outputExecutionPlan,
   summarizeResults,
 } from '../src/nopy.executor.js';
@@ -136,17 +137,33 @@ describe('outputExecutionPlan', () => {
     expect(parsed.plan[0].host).toBe('host1');
   });
 
-  it('masks password variables in text output', () => {
+  it('masks variables the manifest declared secret', () => {
     const call: DeployCall = {
       ...createTestCall('cube-a', 'host1'),
-      env: { PASSWORD: 'secret', OTHER: 'visible' },
+      command: ['pyinfra', 'host1', '-y', '--data "PASSWORD=hunter2"', '--data "OTHER=visible"'],
+      env: { PASSWORD: 'hunter2', OTHER: 'visible' },
+      secrets: ['PASSWORD'],
     };
 
     outputExecutionPlan([call]);
 
     const output = consoleLogSpy.mock.calls.map((c) => c[0]).join('\n');
     expect(output).toContain('********');
-    expect(output).not.toContain('secret');
+    // Both the variable list and the command line above it — the command used
+    // to be printed unmasked, which defeated the masking entirely.
+    expect(output).not.toContain('hunter2');
+    expect(output).toContain('visible');
+  });
+
+  it('leaves a password-looking variable alone when the manifest says nothing', () => {
+    const call: DeployCall = {
+      ...createTestCall('cube-a', 'host1'),
+      env: { PASSWORD: 'visible' },
+    };
+
+    outputExecutionPlan([call]);
+
+    const output = consoleLogSpy.mock.calls.map((c) => c[0]).join('\n');
     expect(output).toContain('visible');
   });
 
@@ -171,5 +188,51 @@ describe('outputExecutionPlan', () => {
 
     const output = consoleLogSpy.mock.calls.map((c) => c[0]).join('\n');
     expect(output).toContain('Total: 3');
+  });
+});
+
+describe('maskCommand', () => {
+  const call = (command: string[], secrets?: string[]): DeployCall => ({
+    ...createTestCall('cube-a', 'host1'),
+    command,
+    secrets,
+  });
+
+  it('replaces the value of a declared secret', () => {
+    const masked = maskCommand(
+      call(['pyinfra', 'host1', '--data "PASSWORD=hunter2"'], ['PASSWORD'])
+    );
+
+    expect(masked).toBe('pyinfra host1 --data "PASSWORD=********"');
+  });
+
+  it('leaves other data alone', () => {
+    const masked = maskCommand(
+      call(['--data "SSID=home"', '--data "PASSWORD=hunter2"'], ['PASSWORD'])
+    );
+
+    expect(masked).toBe('--data "SSID=home" --data "PASSWORD=********"');
+  });
+
+  it('masks a value containing spaces up to the closing quote', () => {
+    const masked = maskCommand(call(['--data "PASSWORD=two words"', '--chdir /x'], ['PASSWORD']));
+
+    expect(masked).toBe('--data "PASSWORD=********" --chdir /x');
+  });
+
+  it('masks an empty secret value', () => {
+    expect(maskCommand(call(['--data "PASSWORD="'], ['PASSWORD']))).toBe(
+      '--data "PASSWORD=********"'
+    );
+  });
+
+  it('masks the ssh password whether or not the cube declares secrets', () => {
+    const masked = maskCommand(call(['pyinfra', 'host1', '--user bob --password s3cr3t', '-y']));
+
+    expect(masked).toBe('pyinfra host1 --user bob --password ******** -y');
+  });
+
+  it('returns the command untouched when there is nothing to hide', () => {
+    expect(maskCommand(call(['pyinfra', 'host1', '-y']))).toBe('pyinfra host1 -y');
   });
 });

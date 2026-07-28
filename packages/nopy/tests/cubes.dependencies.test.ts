@@ -2,10 +2,10 @@
  * Tests for cubes/dependencies module (BuildContext)
  */
 
+import { Cube, Manifest } from '@bitsquare/nopy-cube';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { BuildContext } from '../src/cubes/dependencies.js';
-import { Cube, Manifest } from '../src/cubes/types.js';
 import { Variables } from '../src/nopy.common.js';
 
 // Mock VariableAssignment to avoid hanging on prompts
@@ -82,7 +82,7 @@ describe('BuildContext.resolveCube', () => {
 
     // Test with USE_A = false
     const vars2 = new Variables();
-    vars2.assign('cube-c', 'params', { USE_A: false });
+    vars2.assign('cube-c', 'param', { USE_A: false });
     const context2 = new BuildContext(cubes, vars2, { cubes: [] } as any, { env: {} } as any, {
       method: 'ssh',
     });

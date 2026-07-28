@@ -2,10 +2,10 @@
  * Edge cases for BuildContext: unknown cubes, session replay and auth flags.
  */
 
+import { type AnyObjectSchema, Cube, Manifest } from '@bitsquare/nopy-cube';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { BuildContext } from '../src/cubes/dependencies.js';
-import { Cube, Manifest } from '../src/cubes/types.js';
 import { Variables } from '../src/nopy.common.js';
 import type { NopyConfig } from '../src/nopy.config.js';
 import type { NopySession } from '../src/nopy.session.js';
@@ -19,6 +19,14 @@ import { VariableAssignment } from '../src/nopy.prompts.js';
 
 const testCube = (id: string, schema = z.object({})) =>
   new Cube(Manifest.create({ id, name: `Test ${id}`, schema }), `/test/${id}`, 'deploy.py');
+
+/** A cube whose PASSWORD the manifest declares a secret. */
+const secretCube = (id: string, schema: AnyObjectSchema) =>
+  new Cube(
+    Manifest.create({ id, name: `Test ${id}`, schema, secrets: ['PASSWORD'] }),
+    `/test/${id}`,
+    'deploy.py'
+  );
 
 const config = { env: {} } as NopyConfig;
 const session = (cubes: NopySession['cubes'] = []) => ({ cubes }) as NopySession;
@@ -101,6 +109,134 @@ describe('BuildContext session replay', () => {
     await context.resolveCube('cube-a', 'host1');
 
     expect(VariableAssignment).toHaveBeenCalled();
+  });
+
+  it('lets a recorded value beat config env', async () => {
+    const cube = testCube('cube-a', z.object({ PORT: z.string().default('3000') }));
+    const context = new BuildContext(
+      { 'cube-a': cube },
+      new Variables({ PORT: '2222' }),
+      session([{ key: 'cube-a', variables: { PORT: '9090' } }]),
+      { env: { PORT: '2222' } } as NopyConfig,
+      { method: 'ssh' },
+      { isSessionReplay: true }
+    );
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.deployCalls[0].env.PORT).toBe('9090');
+  });
+});
+
+describe('BuildContext replay gaps', () => {
+  const replay = (cube: Cube, recorded: Record<string, string> = {}, options = {}) =>
+    new BuildContext(
+      { [cube.id]: cube },
+      new Variables(),
+      session([{ key: cube.id, variables: recorded }]),
+      config,
+      { method: 'ssh' },
+      { isSessionReplay: true, ...options }
+    );
+
+  it('asks for a required variable the session never recorded', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+    vi.mocked(VariableAssignment).mockImplementation(async (_cube, variables) => {
+      variables.assign('cube-a', 'prompt', { SSID: 'typed' });
+    });
+
+    const context = replay(cube);
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(VariableAssignment).toHaveBeenCalledWith(cube, expect.anything(), { keys: ['SSID'] });
+    expect(context.deployCalls[0].env.SSID).toBe('typed');
+  });
+
+  it('asks for a secret even though a default already filled it in', async () => {
+    const cube = secretCube('cube-a', z.object({ PASSWORD: z.string().default('changeme') }));
+    vi.mocked(VariableAssignment).mockImplementation(async (_cube, variables) => {
+      variables.assign('cube-a', 'prompt', { PASSWORD: 'real' });
+    });
+
+    const context = replay(cube);
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(VariableAssignment).toHaveBeenCalledWith(cube, expect.anything(), {
+      keys: ['PASSWORD'],
+    });
+    expect(context.deployCalls[0].env.PASSWORD).toBe('real');
+  });
+
+  it('asks nothing when the session covers everything', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+
+    await replay(cube, { SSID: 'recorded' }).resolveCube('cube-a', 'host1');
+
+    expect(VariableAssignment).not.toHaveBeenCalled();
+  });
+
+  it('refuses to deploy when the form was cancelled', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+    // The real VariableAssignment swallows a cancelled form, so the gap check
+    // has to run again afterwards or the cube ships without the variable.
+    vi.mocked(VariableAssignment).mockResolvedValue(undefined);
+
+    const context = replay(cube);
+
+    await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
+      'Cube "cube-a" is missing SSID and cannot be deployed.'
+    );
+    expect(context.deployCalls).toHaveLength(0);
+  });
+
+  it('cannot fill a gap when --use-defaults forbids prompting', async () => {
+    const cube = secretCube('cube-a', z.object({ PASSWORD: z.string().default('changeme') }));
+
+    const context = replay(cube, {}, { useDefaults: true });
+
+    await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
+      /cannot be replayed with --use-defaults: PASSWORD/
+    );
+  });
+});
+
+describe('BuildContext session recording', () => {
+  it('records every value the run settled on, not only the prompted ones', async () => {
+    const cube = testCube('cube-a', z.object({ PORT: z.string().default('3000') }));
+    const context = new BuildContext(
+      { 'cube-a': cube },
+      new Variables({ REGION: 'eu' }),
+      session(),
+      config,
+      { method: 'ssh' },
+      { useDefaults: true }
+    );
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.cubeSessions[0].variables).toEqual({ PORT: '3000', REGION: 'eu' });
+  });
+
+  it('keeps a declared secret out of the session', async () => {
+    const cube = secretCube(
+      'cube-a',
+      z.object({ USER: z.string().default('bob'), PASSWORD: z.string().default('changeme') })
+    );
+    const context = new BuildContext(
+      { 'cube-a': cube },
+      new Variables(),
+      session(),
+      config,
+      { method: 'ssh' },
+      { useDefaults: true }
+    );
+
+    await context.resolveCube('cube-a', 'host1');
+
+    // Still handed to pyinfra — just never written down.
+    expect(context.deployCalls[0].env.PASSWORD).toBe('changeme');
+    expect(context.deployCalls[0].secrets).toEqual(['PASSWORD']);
+    expect(context.cubeSessions[0].variables).toEqual({ USER: 'bob' });
   });
 });
 

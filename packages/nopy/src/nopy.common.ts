@@ -1,49 +1,204 @@
 /**
- * Environment variable configuration
+ * Variable assignment and provenance
+ * @module nopy.common
  */
-export type TVariables = Record<string, string | number | boolean>;
 
-export namespace Variables {
-  export type ArtefactId = string;
-  export type Scope = 'defaults' | 'prompts' | 'params';
+/** What a cube variable can hold — the value types `--data KEY=VALUE` can carry. */
+export type Value = string | number | boolean;
+
+/** A flat bag of variable values, keyed by name. */
+export type TVariables = Record<string, Value>;
+
+/**
+ * Where a value came from, in ascending precedence.
+ *
+ * The order is the point. It used to be implied by the field order of an object
+ * literal inside `Variables.get()` — load-bearing, invisible, and one careless
+ * reformat away from silently changing which value wins. Here it is stated once,
+ * in {@link RANK}, and everything else derives from it.
+ *
+ * - `default` — a `.default()` on the cube's schema
+ * - `env` — the `env` block of `.nopyrc.json`
+ * - `session` — read back from a recorded session on replay
+ * - `prompt` — what the user typed
+ * - `param` — handed over by a dependency spec or a hook's `exec()`
+ */
+export type Origin = 'default' | 'env' | 'session' | 'prompt' | 'param';
+
+const RANK: Record<Origin, number> = {
+  default: 0,
+  env: 1,
+  session: 2,
+  prompt: 3,
+  param: 4,
+};
+
+/** One value handed to a variable, and where it came from. */
+export interface Assignment {
+  value: Value;
+  origin: Origin;
 }
 
-export class Variables {
-  /** @summary env as configured in cube or session script */
-  defaults: Record<Variables.ArtefactId, TVariables> = {};
-  /** @summary env as configured via prompts */
-  prompts: Record<Variables.ArtefactId, TVariables> = {};
-  /** @summary env as handed via params (on hook calls) */
-  params: Record<Variables.ArtefactId, TVariables> = {};
+/** What a secret shows as wherever a value would otherwise be printed. */
+export const MASK = '********';
 
-  constructor(readonly global: TVariables = {}) {}
+/**
+ * One variable of one cube, and every value it has ever been given.
+ *
+ * Two orderings are kept, deliberately: {@link assignments} is the raw trace in
+ * the order things happened, and {@link ordered} re-ranks it by origin. The
+ * first answers "how did we get here", the second answers "what wins".
+ */
+export class Variable {
+  /** Every assignment received, newest first. Never reordered. */
+  readonly assignments: Assignment[] = [];
 
-  assign(artefactId: Variables.ArtefactId, scope: Variables.Scope, values: TVariables = {}) {
-    if (!this[scope][artefactId]) {
-      this[scope][artefactId] = values;
-    } else {
-      Object.assign(this[scope][artefactId], values);
-    }
+  /**
+   * Declared a secret by the cube's manifest: kept out of saved sessions and
+   * masked wherever the value would otherwise be printed.
+   */
+  redacted = false;
+
+  constructor(
+    readonly cube: string,
+    readonly name: string,
+    first: Assignment
+  ) {
+    this.assign(first);
+  }
+
+  assign(assignment: Assignment): void {
+    this.assignments.unshift(assignment);
   }
 
   /**
-   * Merges the scopes for one cube, lowest precedence first:
-   * schema defaults → global `env` → prompts (or replayed session values) →
-   * params handed over by a dependency or a hook.
+   * The trace re-ranked by origin, winner first.
    *
-   * Defaults sit at the bottom so `env` in `.nopyrc.json` can steer a run that
-   * never prompts (`--use-defaults`); a key that a dependency supplies is never
-   * prompted for, so prompts and params do not compete in practice.
+   * Stability is load-bearing here. The trace is newest-first and
+   * `Array.prototype.sort` is stable per spec, so two assignments sharing an
+   * origin keep their relative order and the newer one stays in front: the
+   * second dependency to pass a param wins, and the one it displaced is still
+   * visible underneath instead of being overwritten out of existence.
    */
-  get(artefactId: Variables.ArtefactId, scope?: Variables.Scope): TVariables {
-    if (scope) {
-      return this[scope][artefactId] || {};
-    }
+  get ordered(): Assignment[] {
+    return [...this.assignments].sort((a, b) => RANK[b.origin] - RANK[a.origin]);
+  }
+
+  /** The assignment that wins. Never undefined — a Variable is born with one. */
+  get effective(): Assignment {
+    return this.ordered[0];
+  }
+
+  get value(): Value {
+    return this.effective.value;
+  }
+
+  get origin(): Origin {
+    return this.effective.origin;
+  }
+
+  /** Safe to log: a redacted variable never yields its value. */
+  toJSON(): { cube: string; name: string; value: Value; origin: Origin } {
     return {
-      ...this.defaults[artefactId],
-      ...this.global,
-      ...this.prompts[artefactId],
-      ...this.params[artefactId],
+      cube: this.cube,
+      name: this.name,
+      value: this.redacted ? MASK : this.value,
+      origin: this.origin,
     };
+  }
+}
+
+/**
+ * Every variable of every cube in one run, with its provenance.
+ */
+export class Variables {
+  private readonly store: Record<string, Record<string, Variable>> = {};
+  private readonly secrets: Record<string, Set<string>> = {};
+
+  constructor(readonly env: TVariables = {}) {}
+
+  /**
+   * Marks keys of one cube as holding secrets.
+   *
+   * Retroactive as well as prospective, so it does not matter whether the
+   * caller declares before or after the values arrive.
+   */
+  declareSecrets(cube: string, keys: readonly string[]): void {
+    this.secrets[cube] ??= new Set<string>();
+    const declared = this.secrets[cube];
+    for (const key of keys) declared.add(key);
+    for (const variable of this.all(cube)) {
+      if (declared.has(variable.name)) variable.redacted = true;
+    }
+  }
+
+  isSecret(cube: string, name: string): boolean {
+    return this.secrets[cube]?.has(name) ?? false;
+  }
+
+  /** Records values for one cube, all at the same origin. */
+  assign(cube: string, origin: Origin, values: TVariables = {}): void {
+    const bucket = this.bucket(cube);
+    for (const [name, value] of Object.entries(values)) {
+      const existing = bucket[name];
+      if (existing) existing.assign({ value, origin });
+      else bucket[name] = this.create(cube, name, { value, origin });
+    }
+  }
+
+  /** Every variable known for one cube. */
+  all(cube: string): Variable[] {
+    return Object.values(this.store[cube] ?? {});
+  }
+
+  /** One variable, or `undefined` if nothing has ever assigned to it. */
+  of(cube: string, name: string): Variable | undefined {
+    return this.store[cube]?.[name];
+  }
+
+  /** The effective values for one cube — what goes on the pyinfra command line. */
+  get(cube: string): TVariables {
+    const values: TVariables = {};
+    for (const variable of this.all(cube)) values[variable.name] = variable.value;
+    return values;
+  }
+
+  /**
+   * The effective values minus anything declared secret — what a session
+   * records. A secret is left out entirely rather than masked, so a replay sees
+   * it as absent and asks for it again.
+   */
+  persistable(cube: string): TVariables {
+    const values: TVariables = {};
+    for (const variable of this.all(cube)) {
+      if (!variable.redacted) values[variable.name] = variable.value;
+    }
+    return values;
+  }
+
+  private create(cube: string, name: string, first: Assignment): Variable {
+    const variable = new Variable(cube, name, first);
+    variable.redacted = this.isSecret(cube, name);
+    return variable;
+  }
+
+  /**
+   * A cube's bucket, seeded on creation with the config `env`.
+   *
+   * `env` applies to every cube, so it becomes a real assignment on each of them
+   * rather than a parallel bag merged in at read time. That is what lets it
+   * carry an origin, show up in the trace, and lose to a prompt by the same rule
+   * as everything else.
+   */
+  private bucket(cube: string): Record<string, Variable> {
+    const existing = this.store[cube];
+    if (existing) return existing;
+
+    const bucket: Record<string, Variable> = {};
+    this.store[cube] = bucket;
+    for (const [name, value] of Object.entries(this.env)) {
+      bucket[name] = this.create(cube, name, { value, origin: 'env' });
+    }
+    return bucket;
   }
 }

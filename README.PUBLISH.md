@@ -21,19 +21,44 @@ shipped. If you only want to cut a release, jump to
 
 ## What ships
 
-| Directory         | Package            | Binary   |
-| ----------------- | ------------------ | -------- |
-| `packages/nopy`   | `@bitsquare/nopy`   | `nopy`   |
-| `packages/keyman` | `@bitsquare/keyman` | `keyman` |
+| Directory             | Package                 | Binary   | Kind                     |
+| --------------------- | ----------------------- | -------- | ------------------------ |
+| `packages/nopy`       | `@bitsquare/nopy`       | `nopy`   | CLI                      |
+| `packages/keyman`     | `@bitsquare/keyman`     | `keyman` | CLI                      |
+| `packages/nopy-cube`  | `@bitsquare/nopy-cube`  | —        | library (cube authoring) |
+| `packages/cubes-core` | `@bitsquare/cubes-core` | —        | cube bundle (no build)   |
 
-Both are ESM, both declare `engines.node >= 22`, and both expose a single
+All are ESM and declare `engines.node >= 22`. The two CLIs expose a single
 executable through `bin`, so `npm install -g` puts `nopy` / `keyman` on the
-`PATH`. `cubes/` is not a package and is never published.
+`PATH`; the other two are libraries you add to a project.
 
-The tarball contents are pinned by `files: ["dist", "README.md", "LICENSE"]` —
-sources and tests are not shipped. `publishConfig.access: "public"` is what makes
-a scoped package publishable to npmjs without an extra flag; the workflows pass
-`--access public` anyway.
+The tarball contents are pinned by `files` — for the three TypeScript packages
+that is `["dist", "README.md", "LICENSE"]`, so sources and tests are not shipped.
+`cubes-core` ships `["cubes", "!cubes/**/*.log", "README.md", "LICENSE"]`: the
+negation matters, because a cube that has been run leaves a `pyinfra-debug.log`
+next to its `deploy.py`, and `.gitignore` does not filter an npm tarball.
+`publishConfig.access: "public"` is what makes a scoped package publishable to
+npmjs without an extra flag; the workflows pass `--access public` anyway.
+
+### Dependencies between them
+
+`keyman` stands alone. `nopy` and `cubes-core` both depend on `nopy-cube` through
+`workspace:*`, which drives three rules the rest of this document keeps coming
+back to:
+
+1. **Publish with `pnpm`, not `npm`.** `link-workspace-packages` is unset and
+   pnpm 10+ defaults it to `false`, so `workspace:*` is mandatory in the
+   manifests. npm has no idea what that protocol is: `npm pack` copies the string
+   through verbatim and the install fails with `EUNSUPPORTEDPROTOCOL`. `pnpm
+   pack` and `pnpm publish` substitute the concrete version at pack time. Both
+   workflows use `pnpm publish --ignore-scripts --no-git-checks`.
+2. **`nopy-cube` publishes before anything that depends on it.**
+   `node scripts/publish-order.mjs` prints the publishable directories in
+   dependency order — note that plain alphabetical `packages/*/` gets this
+   backwards, putting `nopy` first.
+3. **Every packed manifest is checked.** `node scripts/verify-pack.mjs` packs
+   each non-private package and fails if any `workspace:` range survived into the
+   tarball. It runs in both publish workflows, after the build.
 
 Versions and changelogs are maintained **by hand**. Nothing in CI commits a
 version bump, opens a release PR, or pushes a tag. A release happens because you
@@ -47,7 +72,7 @@ All three live in [`.gitea/workflows`](.gitea/workflows) and run on the
 | Workflow               | Trigger                          | Publishes                                  |
 | ---------------------- | -------------------------------- | ------------------------------------------ |
 | `ci.yml`               | pull requests, non-`main` pushes | nothing                                    |
-| `publish-snapshot.yml` | pushes to `main`                 | **both** packages → Gitea, tag `main`      |
+| `publish-snapshot.yml` | pushes to `main`                 | **every** package → Gitea, tag `main`      |
 | `release.yml`          | tags matching `*-v*`             | **one** package → Gitea **and** npmjs      |
 
 `ci.yml` explicitly excludes `main` and all tags (`branches-ignore` +
@@ -64,13 +89,17 @@ half-finished publish is worse than a slow queue.
 ```
 checkout → pnpm → node → pnpm store cache → install
         → lint:ci → typecheck → test:coverage → coverage summary
-        → build → npm pack --dry-run (per package) → upload coverage
+        → build → npm pack --dry-run (per package) → verify-pack
+        → upload coverage
 ```
 
 The `npm pack --dry-run --ignore-scripts` step prints the exact file list that
 would be published. It is there to catch a `files` or `bin` entry pointing at
 something the build no longer produces — a failure that would otherwise only
-surface after the version is already on a registry and immutable.
+surface after the version is already on a registry and immutable. `verify-pack`
+then packs for real and checks no `workspace:` range survived; both publish
+workflows run it too, but running it here is what puts the failure on the pull
+request rather than on the release.
 
 Coverage HTML/JSON reports are uploaded as a `coverage` artifact with a 7-day
 retention. Both the artifact upload and the store cache are
@@ -82,18 +111,25 @@ slower CI rather than broken CI.
 ```
 checkout → pnpm → node → cache → install
         → lint:ci → typecheck → test:coverage → coverage summary → build
-        → write .npmrc → publish both packages → delete .npmrc
+        → verify-pack → write .npmrc → publish every package → delete .npmrc
 ```
 
 One job, no `needs:` barrier, so install and build happen exactly once and
 nothing has to be passed between jobs as an artifact.
 
+The publish step is **two passes** over `node scripts/publish-order.mjs`: the
+first stamps the snapshot version into every manifest with `npm pkg set`, the
+second publishes. They cannot be one loop — `pnpm publish` reads a linked
+package's version out of its manifest at pack time, so stamping and publishing
+one package at a time would bake the *old* `nopy-cube` version into `nopy`'s
+tarball.
+
 ### `release.yml`
 
 ```
 checkout → resolve tag → check secrets
-        → pnpm → node → cache → install
-        → lint:ci → typecheck → test:coverage → build
+        → pnpm → node → cache → install → check linked deps are released
+        → lint:ci → typecheck → test:coverage → build → verify-pack
         → publish to Gitea → publish to npmjs → delete .npmrc
         → create the Gitea release → step summary
 ```
@@ -101,6 +137,14 @@ checkout → resolve tag → check secrets
 Tag resolution and the secret check run **before** anything is installed or
 built, so a malformed tag or a missing token fails in seconds instead of after
 the whole gate.
+
+*Check linked deps are released* asks npmjs whether every `workspace:` dependency
+of the package being released already exists at the version pnpm is about to
+bake in (`scripts/linked-deps.mjs` → `npm view`). Tagging `nopy-v1.3.0` while
+`@bitsquare/nopy-cube@1.1.0` is still unpublished would otherwise ship a tarball
+nobody can install, and npmjs only lets you unpublish for 72 hours. The check is
+npmjs-only: it runs before any credentials are written, and npmjs is the registry
+where the mistake is permanent.
 
 ## The verification gate
 
@@ -143,7 +187,7 @@ a prerelease over `latest` by accident.
 
 ## Snapshots
 
-Every commit that lands on `main` publishes both packages to the Gitea registry,
+Every commit that lands on `main` publishes every package to the Gitea registry,
 versioned as:
 
 ```
@@ -175,7 +219,34 @@ edit is discarded with the workspace and is never committed.
    ```
 
 The tag name is `<directory>-v<version>` — the directory under `packages/`, not
-the npm name. `nopy-v1.2.0`, not `@bitsquare/nopy-v1.2.0`.
+the npm name. `nopy-v1.2.0`, not `@bitsquare/nopy-v1.2.0`. All four prefixes work
+the same way:
+
+```sh
+git tag nopy-v1.2.0
+git tag keyman-v1.2.0
+git tag nopy-cube-v1.2.0
+git tag cubes-core-v1.2.0
+```
+
+### Ordering when more than one package changed
+
+Tags are independent, but the dependency graph is not. If a release touches
+`nopy-cube` *and* something that depends on it, release them in this order,
+waiting for each run to go green:
+
+```
+nopy-cube  →  nopy, cubes-core   (these two are independent of each other)
+```
+
+Release `nopy` first and the run stops at the *check linked deps* step, telling
+you the `nopy-cube` version it wanted is not on npmjs. That is the guard working;
+release `nopy-cube`, then re-tag. `node scripts/publish-order.mjs` prints the
+order if you would rather not reason about it.
+
+Bumping `nopy-cube` means bumping the packages that depend on it in the same
+change — the `workspace:*` range resolves to whatever version is in the workspace
+at pack time, so their next release picks it up whether or not you meant it to.
 
 The tag decides **which** package ships; `package.json` decides the **version**.
 The workflow re-reads the manifest and refuses to continue if the two disagree:
@@ -281,10 +352,19 @@ file written into the workspace can never be committed by accident.
 
 ## Installing the packages
 
-From npmjs — public, no configuration:
+From npmjs — public, no configuration. The CLIs go on the `PATH`:
 
 ```sh
 npm install -g @bitsquare/nopy @bitsquare/keyman
+```
+
+The other two go into a project. A cube bundle is a dev dependency of whatever
+repo describes your infrastructure; `nopy-cube` is only needed if you are writing
+cubes of your own:
+
+```sh
+pnpm add -D @bitsquare/cubes-core     # then name it in .nopyrc.json cubePackages
+pnpm add -D @bitsquare/nopy-cube zod  # authoring your own manifests
 ```
 
 From the Gitea registry, which holds every snapshot plus a mirror of every
@@ -321,9 +401,17 @@ refuses to overwrite an existing version — without the check, a re-run would f
 on the first registry and never reach the second.
 
 **The build is explicit, publishes are `--ignore-scripts`.** `prepack` exists for
-humans running `npm pack` locally; in CI the build has already run as its own
-step, and repeating it inside `npm publish` would only cost time and add a way
-for a lifecycle script to change what ships after the gate looked at it.
+humans packing locally; in CI the build has already run as its own step, and
+repeating it inside `pnpm publish` would only cost time and add a way for a
+lifecycle script to change what ships after the gate looked at it.
+
+**`verify-pack.mjs` checks the artefact, not the source.** Reading `package.json`
+in the repo would only tell you what you already know — every one of them says
+`workspace:*`. The question is what pnpm wrote into the tarball, so the script
+packs, extracts `package/package.json`, and reads the ranges back out. It cannot
+pass `--ignore-scripts`, because `pnpm pack` has no such flag (only `pnpm publish`
+does), so `prepack` rebuilds — which at least means the tarball under test is
+byte-for-byte the one publish would ship.
 
 **One job per workflow.** No artifact hand-off, no second install, no risk of
 publishing a tree that a different job built.
@@ -352,7 +440,31 @@ See what would actually be in the tarball:
 
 ```sh
 pnpm run build
-cd packages/nopy && npm pack --dry-run --ignore-scripts
+cd packages/nopy && pnpm pack --dry-run
+```
+
+Check that no `workspace:` range leaks into a published manifest — the same
+check CI runs:
+
+```sh
+node scripts/verify-pack.mjs
+node scripts/publish-order.mjs             # the order to release in
+node scripts/linked-deps.mjs packages/nopy # what must be on the registry first
+```
+
+Rehearse an install the way a stranger gets one, without publishing anything.
+Use **npm**, not pnpm: npm is the one that rejects a leaked `workspace:` range,
+so a clean install here is the real proof.
+
+```sh
+pnpm --filter @bitsquare/nopy-cube pack --pack-destination /tmp/tgz
+pnpm --filter @bitsquare/nopy      pack --pack-destination /tmp/tgz
+pnpm --filter @bitsquare/cubes-core pack --pack-destination /tmp/tgz
+
+mkdir /tmp/try && cd /tmp/try && npm init -y
+npm install /tmp/tgz/*.tgz
+echo '{"hosts":["h"],"cubePackages":["@bitsquare/cubes-core"]}' > .nopyrc.json
+./node_modules/.bin/nopy install -l session.json -P -D
 ```
 
 Try the binary as an end user would get it, without publishing:
@@ -384,6 +496,9 @@ npm view @bitsquare/nopy@1.2.0 version \
 | `npm pack --dry-run` step fails                                 | A `files` or `bin` path no longer exists after the build. Fix before it reaches a registry.      |
 | Snapshot workflow green, nothing installable                    | Snapshots are only on Gitea and only under `@main`. Point the scope at the Gitea registry.      |
 | The release workflow did not trigger                            | The tag must match `*-v*` and must be pushed (`git push origin <tag>`), not just created.       |
+| `EUNSUPPORTEDPROTOCOL` / `Unsupported URL Type "workspace:"` on install | A `workspace:` range reached a tarball — something published with `npm publish` instead of `pnpm publish`. `verify-pack.mjs` exists to catch this before it ships. |
+| `... is not published yet on npmjs` before the gate runs        | Releasing a package before its `nopy-cube` dependency. Tag and release `nopy-cube` first, then re-tag. |
+| `verify-pack.mjs` fails locally with a build error              | `pnpm pack` runs `prepack`, so a broken build fails the check. Fix the build; there is no skip flag. |
 
 ## Recovering from a bad publish
 

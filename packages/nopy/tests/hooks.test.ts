@@ -2,10 +2,10 @@
  * Tests for cube hooks using BuildContext
  */
 
+import { Cube, Manifest } from '@bitsquare/nopy-cube';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { BuildContext } from '../src/cubes/dependencies.js';
-import { Cube, Manifest } from '../src/cubes/types.js';
 import { Variables } from '../src/nopy.common.js';
 
 describe('Cube Hooks', () => {

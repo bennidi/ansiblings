@@ -1,78 +1,203 @@
 /**
- * Tests for the Variables scope container.
+ * Tests for Variable and Variables.
  *
- * The merge order is what makes a non-interactive run configurable, so it is
- * pinned down here rather than left to the callers to demonstrate.
+ * Two things are pinned down here rather than left to the callers to
+ * demonstrate: the precedence between origins, which is what makes a
+ * non-interactive run configurable, and the tie-break between two assignments
+ * sharing an origin, which is what keeps a losing dependency visible instead of
+ * overwritten.
  */
 
 import { describe, expect, it } from 'vitest';
-import { Variables } from '../src/nopy.common.js';
+import { MASK, Variable, Variables } from '../src/nopy.common.js';
 
-describe('Variables.assign', () => {
-  it('creates the scope entry on first assignment and merges afterwards', () => {
-    const variables = new Variables();
+describe('Variable ordering', () => {
+  it('is born with its first assignment', () => {
+    const variable = new Variable('cube-a', 'PORT', { value: 22, origin: 'default' });
 
-    variables.assign('cube-a', 'defaults', { A: 1 });
-    variables.assign('cube-a', 'defaults', { B: 2 });
-
-    expect(variables.get('cube-a', 'defaults')).toEqual({ A: 1, B: 2 });
+    expect(variable.value).toBe(22);
+    expect(variable.origin).toBe('default');
+    expect(variable.assignments).toHaveLength(1);
   });
 
-  it('defaults to an empty assignment', () => {
-    const variables = new Variables();
+  it('lets a higher origin win however late it arrives', () => {
+    const variable = new Variable('cube-a', 'PORT', { value: 22, origin: 'default' });
 
-    variables.assign('cube-a', 'prompts');
+    variable.assign({ value: 8080, origin: 'param' });
+    variable.assign({ value: 2222, origin: 'env' });
 
-    expect(variables.get('cube-a', 'prompts')).toEqual({});
+    expect(variable.value).toBe(8080);
+    expect(variable.origin).toBe('param');
   });
 
-  it('keeps scopes and cubes apart', () => {
-    const variables = new Variables();
+  it('keeps the newest of two assignments sharing an origin', () => {
+    const variable = new Variable('cube-a', 'PORT', { value: 1, origin: 'param' });
 
-    variables.assign('cube-a', 'params', { A: 1 });
+    variable.assign({ value: 2, origin: 'param' });
 
-    expect(variables.get('cube-a', 'prompts')).toEqual({});
-    expect(variables.get('cube-b', 'params')).toEqual({});
+    expect(variable.value).toBe(2);
+    // The displaced one is still on record — that is the whole point of the
+    // trace, and a sort that broke ties by rank alone would lose it.
+    expect(variable.ordered.map((a) => a.value)).toEqual([2, 1]);
+  });
+
+  it('keeps the raw trace in assignment order, newest first', () => {
+    const variable = new Variable('cube-a', 'PORT', { value: 22, origin: 'default' });
+
+    variable.assign({ value: 8080, origin: 'param' });
+    variable.assign({ value: 2222, origin: 'env' });
+
+    expect(variable.assignments.map((a) => a.origin)).toEqual(['env', 'param', 'default']);
+    expect(variable.ordered.map((a) => a.origin)).toEqual(['param', 'env', 'default']);
+  });
+
+  it('ranks every origin', () => {
+    const variable = new Variable('cube-a', 'PORT', { value: 'd', origin: 'default' });
+
+    variable.assign({ value: 'e', origin: 'env' });
+    expect(variable.value).toBe('e');
+    variable.assign({ value: 's', origin: 'session' });
+    expect(variable.value).toBe('s');
+    variable.assign({ value: 'p', origin: 'prompt' });
+    expect(variable.value).toBe('p');
+    variable.assign({ value: 'x', origin: 'param' });
+    expect(variable.value).toBe('x');
+  });
+
+  it('never yields the value of a redacted variable when serialised', () => {
+    const variable = new Variable('cube-a', 'PASSWORD', { value: 'hunter2', origin: 'prompt' });
+    variable.redacted = true;
+
+    expect(JSON.parse(JSON.stringify(variable))).toEqual({
+      cube: 'cube-a',
+      name: 'PASSWORD',
+      value: MASK,
+      origin: 'prompt',
+    });
   });
 });
 
-describe('Variables.get precedence', () => {
-  it('lets global env override a schema default', () => {
-    const variables = new Variables({ PORT: 2222 });
-    variables.assign('cube-a', 'defaults', { PORT: 22 });
+describe('Variables.assign', () => {
+  it('creates a variable on first assignment and appends afterwards', () => {
+    const variables = new Variables();
 
-    expect(variables.get('cube-a').PORT).toBe(2222);
+    variables.assign('cube-a', 'default', { A: 1 });
+    variables.assign('cube-a', 'prompt', { A: 2 });
+
+    expect(variables.of('cube-a', 'A')?.assignments).toHaveLength(2);
+    expect(variables.get('cube-a')).toEqual({ A: 2 });
   });
 
-  it('lets a prompt override global env', () => {
+  it('tolerates an empty assignment', () => {
+    const variables = new Variables();
+
+    variables.assign('cube-a', 'prompt');
+
+    expect(variables.get('cube-a')).toEqual({});
+  });
+
+  it('keeps cubes apart', () => {
+    const variables = new Variables();
+
+    variables.assign('cube-a', 'param', { A: 1 });
+
+    expect(variables.get('cube-b')).toEqual({});
+    expect(variables.of('cube-b', 'A')).toBeUndefined();
+  });
+});
+
+describe('Variables precedence', () => {
+  it('lets config env override a schema default', () => {
     const variables = new Variables({ PORT: 2222 });
-    variables.assign('cube-a', 'defaults', { PORT: 22 });
-    variables.assign('cube-a', 'prompts', { PORT: 8080 });
+    variables.assign('cube-a', 'default', { PORT: 22 });
+
+    expect(variables.get('cube-a').PORT).toBe(2222);
+    expect(variables.of('cube-a', 'PORT')?.origin).toBe('env');
+  });
+
+  it('lets a prompt override config env', () => {
+    const variables = new Variables({ PORT: 2222 });
+    variables.assign('cube-a', 'default', { PORT: 22 });
+    variables.assign('cube-a', 'prompt', { PORT: 8080 });
 
     expect(variables.get('cube-a').PORT).toBe(8080);
   });
 
+  it('lets a replayed session value override config env', () => {
+    const variables = new Variables({ PORT: 2222 });
+    variables.assign('cube-a', 'default', { PORT: 22 });
+    variables.assign('cube-a', 'session', { PORT: 3000 });
+
+    expect(variables.get('cube-a').PORT).toBe(3000);
+  });
+
   it('lets a dependency param override everything else', () => {
     const variables = new Variables({ PORT: 2222 });
-    variables.assign('cube-a', 'defaults', { PORT: 22 });
-    variables.assign('cube-a', 'prompts', { PORT: 8080 });
-    variables.assign('cube-a', 'params', { PORT: 9090 });
+    variables.assign('cube-a', 'default', { PORT: 22 });
+    variables.assign('cube-a', 'prompt', { PORT: 8080 });
+    variables.assign('cube-a', 'param', { PORT: 9090 });
 
     expect(variables.get('cube-a').PORT).toBe(9090);
   });
 
-  it('merges keys from every scope', () => {
+  it('merges keys from every origin', () => {
     const variables = new Variables({ G: 'g' });
-    variables.assign('cube-a', 'defaults', { D: 'd' });
-    variables.assign('cube-a', 'prompts', { P: 'p' });
-    variables.assign('cube-a', 'params', { X: 'x' });
+    variables.assign('cube-a', 'default', { D: 'd' });
+    variables.assign('cube-a', 'prompt', { P: 'p' });
+    variables.assign('cube-a', 'param', { X: 'x' });
 
     expect(variables.get('cube-a')).toEqual({ G: 'g', D: 'd', P: 'p', X: 'x' });
   });
 
-  it('applies global env to every cube', () => {
+  it('applies config env to every cube it is asked about', () => {
     const variables = new Variables({ SHARED: 'yes' });
 
-    expect(variables.get('anything').SHARED).toBe('yes');
+    variables.assign('cube-a', 'default', {});
+    variables.assign('cube-b', 'default', {});
+
+    expect(variables.get('cube-a').SHARED).toBe('yes');
+    expect(variables.get('cube-b').SHARED).toBe('yes');
+    expect(variables.of('cube-a', 'SHARED')?.origin).toBe('env');
+  });
+});
+
+describe('Variables secrets', () => {
+  it('excludes a declared secret from what a session records', () => {
+    const variables = new Variables();
+    variables.declareSecrets('cube-a', ['PASSWORD']);
+    variables.assign('cube-a', 'prompt', { USER: 'bob', PASSWORD: 'hunter2' });
+
+    expect(variables.get('cube-a')).toEqual({ USER: 'bob', PASSWORD: 'hunter2' });
+    expect(variables.persistable('cube-a')).toEqual({ USER: 'bob' });
+  });
+
+  it('marks values that arrived before the declaration', () => {
+    const variables = new Variables();
+    variables.assign('cube-a', 'prompt', { PASSWORD: 'hunter2' });
+
+    variables.declareSecrets('cube-a', ['PASSWORD']);
+
+    expect(variables.of('cube-a', 'PASSWORD')?.redacted).toBe(true);
+    expect(variables.persistable('cube-a')).toEqual({});
+  });
+
+  it('redacts a secret supplied through config env', () => {
+    const variables = new Variables({ PASSWORD: 'from-env' });
+    variables.declareSecrets('cube-a', ['PASSWORD']);
+
+    variables.assign('cube-a', 'default', {});
+
+    expect(variables.get('cube-a').PASSWORD).toBe('from-env');
+    expect(variables.persistable('cube-a')).toEqual({});
+  });
+
+  it('keeps secret declarations per cube', () => {
+    const variables = new Variables();
+    variables.declareSecrets('cube-a', ['PASSWORD']);
+    variables.assign('cube-a', 'prompt', { PASSWORD: 'a' });
+    variables.assign('cube-b', 'prompt', { PASSWORD: 'b' });
+
+    expect(variables.persistable('cube-a')).toEqual({});
+    expect(variables.persistable('cube-b')).toEqual({ PASSWORD: 'b' });
   });
 });

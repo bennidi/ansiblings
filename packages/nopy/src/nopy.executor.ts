@@ -3,9 +3,10 @@
  * @module nopy.executor
  */
 
+import type { DependencySpec } from '@bitsquare/nopy-cube';
 import { getLogger } from '@logtape/logtape';
 import { execa } from 'execa';
-import type { DependencySpec } from './cubes/types.js';
+import { MASK } from './nopy.common.js';
 
 const log = getLogger(['nopy', 'executor']);
 
@@ -23,8 +24,45 @@ export interface DeployCall {
   command: string[];
   /** Environment variables for the cube */
   env: Record<string, unknown>;
+  /** Schema keys the cube's manifest declared as secrets */
+  secrets?: string[];
   /** Cube dependencies */
   dependencies: DependencySpec[];
+}
+
+/**
+ * The command as it is safe to show: the SSH password, and every `--data KEY=…`
+ * whose key the manifest declared a secret, have their values replaced.
+ *
+ * pyinfra takes its data on the command line, so the real values have to be in
+ * `call.command` — this is the last point before they would reach a log, a
+ * `--print-only` dump or a dry-run plan.
+ */
+export function maskCommand(call: DeployCall): string {
+  const command = call.command.join(' ');
+  const quoteMeta = (key: string) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // The builder always quotes a `--data` value, so the closing quote bounds it.
+  const masked = (call.secrets ?? []).reduce(
+    (acc, key) => acc.replace(new RegExp(`(--data "${quoteMeta(key)}=)[^"]*"`, 'g'), `$1${MASK}"`),
+    command
+  );
+
+  return masked.replace(/(--password )\S+/g, `$1${MASK}`);
+}
+
+/**
+ * The cube's variables as they are safe to show.
+ *
+ * This used to guess, masking any key whose name contained "password" — which
+ * missed `TOKEN` and `PSK`, and was defeated anyway by the unmasked command
+ * printed on the line above it. The manifest says which keys are secret now.
+ */
+export function maskVariables(call: DeployCall): Record<string, string> {
+  const secrets = new Set(call.secrets ?? []);
+  return Object.fromEntries(
+    Object.entries(call.env).map(([key, value]) => [key, secrets.has(key) ? MASK : String(value)])
+  );
 }
 
 /**
@@ -73,7 +111,7 @@ async function executeCall(call: DeployCall): Promise<ExecutionResult> {
 
   try {
     log.info(`Executing: ${call.cube} -> ${call.host}`);
-    log.debug(`Command: ${commandStr}`);
+    log.debug(`Command: ${maskCommand(call)}`);
 
     // Inherit stdio for live output
     await execa({ shell: true })(commandStr, {
@@ -112,8 +150,8 @@ export function outputExecutionPlan(calls: DeployCall[], asJson?: boolean): void
     const plan = calls.map((call) => ({
       cube: call.cube,
       host: call.host,
-      command: call.command.join(' '),
-      variables: call.env,
+      command: maskCommand(call),
+      variables: maskVariables(call),
     }));
     console.log(JSON.stringify({ plan }, null, 2));
     return;
@@ -124,15 +162,13 @@ export function outputExecutionPlan(calls: DeployCall[], asJson?: boolean): void
   for (let i = 0; i < calls.length; i++) {
     const call = calls[i];
     console.log(`Step ${i + 1}: ${call.cube} -> ${call.host}`);
-    console.log(`  Command: ${call.command.join(' ')}`);
+    console.log(`  Command: ${maskCommand(call)}`);
 
-    const envKeys = Object.keys(call.env);
-    if (envKeys.length > 0) {
+    const variables = maskVariables(call);
+    if (Object.keys(variables).length > 0) {
       console.log('  Variables:');
-      for (const [key, value] of Object.entries(call.env)) {
-        // Mask sensitive values
-        const displayValue = key.toLowerCase().includes('password') ? '********' : String(value);
-        console.log(`    ${key}=${displayValue}`);
+      for (const [key, value] of Object.entries(variables)) {
+        console.log(`    ${key}=${value}`);
       }
     }
     console.log();

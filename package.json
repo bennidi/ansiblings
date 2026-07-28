@@ -13,7 +13,7 @@
     "test": "pnpm -r run test",
     "test:coverage": "pnpm -r run test:coverage",
     "coverage:summary": "node scripts/coverage-summary.mjs",
-    "typecheck": "tsc --build --noEmit",
+    "typecheck": "tsc --build",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "lint:ci": "biome ci .",
@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.5",
+    "@bitsquare/cubes-core": "workspace:*",
     "@logtape/logtape": "^2.2.4",
     "@types/node": "^26.1.1",
     "simple-git-hooks": "^2.13.1",

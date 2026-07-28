@@ -36,11 +36,17 @@ function suggestCubes(input: string | undefined, choices: CubeChoice[]): CubeCho
 export async function CubeSelection(
   cubes: Record<string, Cube>
 ): Promise<{ selectedCubes: string[] }> {
+  // The package a cube came from is part of the label rather than a separate
+  // column: `suggest` filters on the label, so typing a package name narrows
+  // the list to that bundle.
   const cubeChoices: CubeChoice[] = Object.values(cubes)
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((cube) => ({
       name: cube.id,
-      message: `${cube.id} - ${cube.name}`,
+      message:
+        cube.source.type === 'package'
+          ? `${cube.id} - ${cube.name} (${cube.source.packageName})`
+          : `${cube.id} - ${cube.name}`,
     }));
 
   // Clear terminal and move cursor to top
@@ -176,24 +182,35 @@ interface FormChoice {
   initial: string;
 }
 
+/**
+ * Asks the user for a cube's variables and records the answers.
+ *
+ * Reads what to offer out of `variables`, so the caller is expected to have
+ * assigned the schema defaults first — which `BuildContext.resolveCube` does.
+ * Deliberately not falling back to `cube.getDefaults()` here: calling it a
+ * second time re-evaluates every lazily declared default, so a cube generating
+ * one would show a different value than the one the run had already recorded.
+ */
 export async function VariableAssignment<S extends AnyObjectSchema>(
   cube: Cube<S>,
-  variables: Variables
+  variables: Variables,
+  opts: { keys?: string[] } = {}
 ) {
   const schema = cube.manifest.schema.shape;
-  const defaults = cube.getDefaults() as Record<string, unknown>;
-  const params = variables.get(cube.id, 'params');
   const resolved = variables.get(cube.id);
   const variablesToConfigure: Record<string, unknown> = {};
 
-  // Every schema key is offered, not just the ones carrying a `.default()` — a
-  // field without one is precisely the field that has to be asked about. Keys a
-  // dependency or hook already supplied are left alone. The value shown is the
+  // Every schema key is offered by default, not just the ones carrying a
+  // `.default()` — a field without one is precisely the field that has to be
+  // asked about. `opts.keys` narrows that to a subset, which is how a replay
+  // asks only about the gaps it cannot fill itself.
+  //
+  // A key a dependency or hook supplied is left alone. The value shown is the
   // one the run would otherwise use, so `env` from `.nopyrc.json` is visible
   // (and editable) rather than silently overridden by whatever is typed.
-  for (const key of Object.keys(schema)) {
-    if (params[key] !== undefined) continue;
-    variablesToConfigure[key] = resolved[key] ?? defaults[key];
+  for (const key of opts.keys ?? Object.keys(schema)) {
+    if (variables.of(cube.id, key)?.origin === 'param') continue;
+    variablesToConfigure[key] = resolved[key];
   }
 
   if (Object.keys(variablesToConfigure).length === 0) return;
@@ -217,7 +234,7 @@ export async function VariableAssignment<S extends AnyObjectSchema>(
       const zodType = schema[key];
       coercedResult[key] = zodType ? coerceValue(value, zodType) : value;
     }
-    variables.assign(cube.id, 'prompts', coercedResult);
+    variables.assign(cube.id, 'prompt', coercedResult);
   } catch {
     // User cancelled
   }

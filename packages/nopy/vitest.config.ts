@@ -1,6 +1,15 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      // The workspace link points at nopy-cube's `dist`, which only exists after
+      // a build. Tests read its source instead, so the gate does not depend on
+      // build ordering and never runs against a stale artifact.
+      '@bitsquare/nopy-cube': fileURLToPath(new URL('../nopy-cube/src/index.ts', import.meta.url)),
+    },
+  },
   test: {
     globals: true,
     environment: 'node',
@@ -12,6 +21,8 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: [
         'src/**/*.test.ts',
+        // Reached through the resolve.alias above; it has its own gate.
+        '**/nopy-cube/**',
         // Pure re-export barrels: no logic to cover.
         'src/index.ts',
         'src/cubes/index.ts',

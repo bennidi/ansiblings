@@ -65,6 +65,20 @@ interface NopyResult {
 
 The cubes module provides types and functions for working with deployment units.
 
+The authoring half of it — `Manifest`, `Cube`, `Hook`, `uniqid` and the rest —
+actually lives in **[`@bitsquare/nopy-cube`](../../nopy-cube)**, a package with
+no CLI and no dependency other than zod. `@bitsquare/nopy` re-exports all of it,
+so both of these work:
+
+```javascript
+import { Manifest } from '@bitsquare/nopy-cube';  // in a manifest.mjs — prefer this
+import { cubes } from '@bitsquare/nopy';          // cubes.Manifest — still supported
+```
+
+Import from `nopy-cube` in a cube bundle you intend to publish: it lets the
+bundle depend on the authoring types without pulling the whole CLI in as a
+dependency. See [CUBE-BUNDLES.md](CUBE-BUNDLES.md).
+
 ### Types
 
 #### `Cube<Schema>`
@@ -76,12 +90,25 @@ interface Cube<Schema extends z.AnyZodObject = z.AnyZodObject> {
   key: string;           // Unique identifier
   name: string;          // Human-readable name
   dir: string;           // Absolute path to cube directory
+  source: CubeSource;    // Where it was discovered
   dependencies: string[];
   schema: Schema;
   defaults: () => z.infer<Schema>;
   before: Hook<Schema>[];
   after: Hook<Schema>[];
 }
+```
+
+#### `CubeSource`
+
+Where a cube came from. Carried so that a duplicate-id error can name the origin
+of each claimant, which is the difference between a usable error message and a
+puzzle when the collision is between a local tree and an installed bundle.
+
+```typescript
+type CubeSource =
+  | { type: 'dir'; dir: string }
+  | { type: 'package'; packageName: string; dir: string };
 ```
 
 #### `Manifest<Schema>`
@@ -124,7 +151,9 @@ interface HookContext {
 
 #### `loadCubes()`
 
-Loads all cubes from discovered cube directories.
+Loads all cubes from discovered cube directories — `cubeDirs`, the directories
+declared by every package in `cubePackages`, and any ancestor directory holding a
+`.npcubes` marker.
 
 ```typescript
 const { cubes, errors } = await loadCubes();
@@ -136,6 +165,27 @@ const { cubes, errors } = await loadCubes();
 interface LoadResult {
   cubes: Record<string, Cube>;
   errors: string[];
+}
+```
+
+`errors` is non-empty for a duplicate id, a manifest that fails to load, a
+package in `cubePackages` that is not installed or declares no cubes, and a
+`nopy.cubes` entry that is missing or points outside its package. Any of them
+aborts the run — none is a silent skip.
+
+#### `resolveCubePackages(refs)`
+
+Resolves `CubePackageRef[]` to installed packages and their cube directories.
+Called by `loadCubes()`; exported because the resolution failures are worth
+testing on their own.
+
+```typescript
+const { packages, errors } = resolveCubePackages(config.cubePackages);
+
+interface CubePackage {
+  name: string;    // the name it was requested under
+  root: string;    // absolute path to the package root
+  dirs: string[];  // absolute paths from its `nopy.cubes` field
 }
 ```
 
@@ -452,10 +502,30 @@ Configuration file structure.
 interface NopyConfig {
   hosts: string[];
   cubeDirs: string[];
+  cubePackages: CubePackageRef[];
   env: EnvConfig;
   log?: LogConfig;
 }
 ```
+
+#### `CubePackageRef`
+
+A package named in `cubePackages`, paired with where it was named. In the config
+file an entry is just a string (`"@bitsquare/cubes-core"`); `loadConfig()`
+normalises it.
+
+```typescript
+interface CubePackageRef {
+  /** The package name, as written in the config. */
+  spec: string;
+  /** Directory of the config file that named it — resolution starts here. */
+  from: string;
+}
+```
+
+`from` is what makes a package named in a parent config resolve against *that*
+config's `node_modules`, not the working directory's. It is the same problem
+`PATH_PROPERTIES` solves for relative `cubeDirs`.
 
 #### `LogConfig`
 

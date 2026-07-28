@@ -231,6 +231,53 @@ describe('config loading', () => {
     });
   });
 
+  describe('cubePackages', () => {
+    it('tags each package with the directory of the config that named it', () => {
+      const child = path.join(rootDir, 'child');
+      write(rootDir, { cubePackages: ['@acme/cubes-net'] });
+      write(child, { cubePackages: ['@acme/cubes-caddy'] });
+      process.chdir(child);
+
+      // Not a path, so nothing is rewritten — but resolution has to start from
+      // the config that asked, which is the only place `from` can come from.
+      expect(loadConfig().cubePackages).toEqual([
+        { spec: '@acme/cubes-net', from: rootDir },
+        { spec: '@acme/cubes-caddy', from: child },
+      ]);
+    });
+
+    it('defaults to an empty list', () => {
+      write(rootDir, { hosts: ['web-1'] });
+      expect(loadConfig().cubePackages).toEqual([]);
+    });
+
+    it('lets a child config replace the list with an override strategy', () => {
+      const child = path.join(rootDir, 'child');
+      write(rootDir, { cubePackages: ['@acme/cubes-net'] });
+      write(child, {
+        cubePackages: ['@acme/cubes-caddy'],
+        resolution: { cubePackages: 'override' },
+      });
+      process.chdir(child);
+
+      expect(loadConfig().cubePackages).toEqual([{ spec: '@acme/cubes-caddy', from: child }]);
+    });
+
+    it('keeps both entries when parent and child name the same package', () => {
+      // Refs are objects, so the primitives-only dedupe in mergeValue does not
+      // fire. resolveCubePackages collapses them, last-wins.
+      const child = path.join(rootDir, 'child');
+      write(rootDir, { cubePackages: ['@acme/cubes-net'] });
+      write(child, { cubePackages: ['@acme/cubes-net'] });
+      process.chdir(child);
+
+      expect(loadConfig().cubePackages).toEqual([
+        { spec: '@acme/cubes-net', from: rootDir },
+        { spec: '@acme/cubes-net', from: child },
+      ]);
+    });
+  });
+
   describe('saveConfig', () => {
     it('writes a new config file at the given path', () => {
       const target = path.join(rootDir, 'custom.json');
