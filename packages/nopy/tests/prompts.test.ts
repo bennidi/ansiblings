@@ -9,9 +9,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-const { inquirerPrompt, formRun, autoCompleteRun, autoCompleteCtor } = vi.hoisted(() => ({
+const { inquirerPrompt, formRun, formCtor, autoCompleteRun, autoCompleteCtor } = vi.hoisted(() => ({
   inquirerPrompt: vi.fn(),
   formRun: vi.fn(),
+  formCtor: vi.fn(),
   autoCompleteRun: vi.fn(),
   autoCompleteCtor: vi.fn(),
 }));
@@ -23,6 +24,9 @@ vi.mock('enquirer', () => ({
   default: {
     Form: class {
       run = formRun;
+      constructor(options: unknown) {
+        formCtor(options);
+      }
     },
     AutoComplete: class {
       run = autoCompleteRun;
@@ -49,6 +53,12 @@ const question = (name: string) => questions().find((q) => q.name === name);
 
 /** Grabs the options the last enquirer AutoComplete prompt was constructed with. */
 const autoComplete = () => autoCompleteCtor.mock.calls.at(-1)?.[0] as Record<string, any>;
+
+/** Grabs the choices the last enquirer Form prompt was constructed with. */
+const formChoices = () => {
+  const options = formCtor.mock.calls.at(-1)?.[0] as { choices: Record<string, any>[] };
+  return options.choices;
+};
 
 const cube = (id: string, name: string, schema = z.object({})) =>
   new Cube(Manifest({ id, name, schema }), `/cubes/${id}`, 'deploy.py');
@@ -238,6 +248,30 @@ describe('VariableAssignment', () => {
 
     expect(formRun).toHaveBeenCalled();
     expect(variables.get('svc', 'prompts')).toEqual({});
+  });
+
+  it('asks about a field that declares no default, with an empty initial value', async () => {
+    const required = z.object({
+      SSID: z.string().describe('Network name'),
+      PRIORITY: z.number().default(10),
+    });
+    formRun.mockResolvedValue({});
+
+    await VariableAssignment(cube('wifi', 'WiFi', required), new Variables());
+
+    expect(formChoices()).toEqual([
+      { name: 'SSID', message: 'Network name', initial: '' },
+      { name: 'PRIORITY', message: 'PRIORITY', initial: '10' },
+    ]);
+  });
+
+  it('offers the value the run would use, not the bare schema default', async () => {
+    const variables = new Variables({ port: 2222 });
+    formRun.mockResolvedValue({});
+
+    await VariableAssignment(cube('svc', 'Service', schema), variables);
+
+    expect(formChoices().find((c) => c.name === 'port')?.initial).toBe('2222');
   });
 
   it('coerces answers using the schema and stores them under prompts', async () => {

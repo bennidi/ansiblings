@@ -14,6 +14,10 @@ Severity is about what it costs a reader:
 Verified against the working tree at commit `fcc1817`. Line numbers are from that
 state.
 
+Findings closed since are marked **✅ … fixed** and keep their original text as
+the record of what was wrong. So far: §1.1 (`--use-defaults`), §2.2
+(`getDefaults()`), half of §2.1 (precedence), and one bullet of §6.4.
+
 ---
 
 ## Contents
@@ -34,7 +38,13 @@ state.
 These are the same class of problem as the `--parallel` flag that was removed
 earlier: documented in detail, absent from the source.
 
-### 1.1 🔴 `-D, --use-defaults` does nothing
+### 1.1 ✅ `-D, --use-defaults` does nothing — **fixed**
+
+> **Resolved.** The flag is now implemented; see `docs/REFACTORING.md` item 5.
+> `BuildContext.resolveCube` skips the prompts, `env` in `.nopyrc.json` outranks
+> the schema default so a non-interactive run can be configured, and a cube with
+> a variable nothing can fill aborts the run by name instead of deploying it
+> blank. The finding below is kept as the record of what was wrong.
 
 | | |
 |---|---|
@@ -128,9 +138,16 @@ dependency detected".
 
 ## 2. Documented behaviour that differs from the code
 
-### 2.1 🔴 Variable precedence is wrong in both directions
+### 2.1 🟡 Variable precedence is wrong in both directions — **partly fixed**
 
-`README.md:107-113` states:
+> **Half resolved.** `env` now outranks the Zod defaults, as documented — this
+> was a prerequisite for `--use-defaults` being configurable at all. The second
+> pair was deliberately left: dependency/hook params still outrank prompts. In
+> practice they do not compete, because `VariableAssignment` leaves out any key
+> a dependency already supplied, so the operator is never asked about it. The
+> README now describes that rather than the old claim.
+
+`README.md:107-113` stated:
 
 > **Priority order (lowest to highest):**
 > 1. Zod schema `.default()` values
@@ -161,7 +178,13 @@ Two pairs are inverted, and both have consequences:
   `[['user:add', {USER: 'deploy'}]]` silently overrides what the operator just
   typed at the form. The docs promise the opposite.
 
-### 2.2 🔴 "Every key ... is guaranteed to be present on `host.data`" — not when a field lacks `.default()`
+### 2.2 ✅ "Every key ... is guaranteed to be present on `host.data`" — not when a field lacks `.default()` — **fixed**
+
+> **Resolved.** `getDefaults()` falls back to a per-field read, so one required
+> field no longer wipes out the rest; `VariableAssignment` prompts for every
+> schema key rather than only the defaulted ones; and `--use-defaults` refuses
+> to deploy a cube whose required key nothing supplied. Verified against all 22
+> cubes in `cubes/`: 19 build a complete `-D` run, the 3 below abort by name.
 
 `README.md:99` states it outright; `README.md:105` claims defaults ensure "every
 cube has a predictable starting state".
@@ -217,7 +240,7 @@ anyone copying it gets bare `UPDATE` / `PACKAGES` keys as prompt labels instead
 of the sentences they wrote. `docs/API.md:610` happens to use the working order —
 the two documents disagree, and neither mentions that it matters.
 
-14 of the 21 cubes in `cubes/` are affected; among them
+15 of the 22 cubes in `cubes/` are affected; among them
 `net:tailscale` (all 4 fields), `runtime:nodevm` (all 4), `user:add` (all 4),
 `ssh:keygen` (all 4) and `admin:locale` (all 4).
 
@@ -442,10 +465,10 @@ packages/nopy/node_modules/@bitsquare/ → absent
 cubes/node_modules/               → absent
 ```
 
-`@bitsquare/nopy` is the documented half. **`zod` is the other half** — 19 of 21
+`@bitsquare/nopy` is the documented half. **`zod` is the other half** — 20 of 22
 manifests `import { z } from 'zod'`, and that fails independently of the nopy
 link. Verified by loading every manifest with a resolver hook: with only
-`@bitsquare/nopy` mapped, 19 of 21 fail `ERR_MODULE_NOT_FOUND: zod`.
+`@bitsquare/nopy` mapped, 20 of 22 fail `ERR_MODULE_NOT_FOUND: zod`.
 
 Because `loadCubes` turns each failure into an `errors` entry and `nopy.main.ts:147-152`
 aborts when `errors.length > 0`, a fresh clone cannot run a single cube. Neither
@@ -527,7 +550,7 @@ a project without `KEY_DIR` in their config gets `None`.
 ## 5. Cube documentation
 
 Two cubes have **no README at all**: `cubes/admin/hostname` and `cubes/git/clone`
-(19 of 21 have one).
+(20 of 22 have one).
 
 ### 5.1 🔴 `cubes/service/autostart/README.md` documents a different cube
 
@@ -635,9 +658,11 @@ the three has to give.
 
 ### 6.4 🟡 Debug output left in the shipped code
 
-- `nopy.common.ts:22` — `console.log('Assigning', artefactId, scope, values)`
+- ~~`nopy.common.ts:22` — `console.log('Assigning', artefactId, scope, values)`
   fires on every variable assignment, printing values to the console. Combined
-  with §4.2 this is a second path by which secrets reach stdout.
+  with §4.2 this is a second path by which secrets reach stdout.~~ **Removed**
+  alongside the `--use-defaults` work; it would have made an unattended run
+  unreadable. The two other paths in §4.2 are untouched.
 - `keyman.encrypt.ts:19-20` — `console.log(tmpKeys); console.log(sshKeys);`
   before the prompt.
 
@@ -683,19 +708,12 @@ Recording what was verified and found correct, so a future pass need not redo it
 
 ## Suggested order of attack
 
-**1 — Decide on the three phantom features.** §1.1 (`-D`), §1.2 (`--json`) and
-§1.3 (`log.*`) are all "documented, wired up, never read". Each is a small
-implementation or a small deletion; what they cannot stay is documented as
-working. `-D` is the most damaging, since it is advertised as the unattended path.
-
-**2 — Fix `getDefaults()` swallowing the schema (§2.2).** One `catch` block
-silently disables three cubes today and will disable any cube whose author
-forgets a `.default()`. Falling back per-field, or surfacing the parse error as a
-load-time `errors` entry, both beat returning `{}`.
-
-**3 — Correct the precedence table (§2.1).** Four lines of README, but it
-documents the system backwards in both directions, and the `env`-override promise
-is the one people will build on.
+**1 — ~~Decide on the three phantom features.~~ Two left.** §1.1 (`-D`) is
+**done** — implemented, tested, and verified against every cube in `cubes/`.
+That closed §2.2 and half of §2.1 with it, since neither could be left standing
+under a run that never prompts. §1.2 (`--json`) and §1.3 (`log.*`) are still
+"documented, wired up, never read": each is a small implementation or a small
+deletion, but neither can stay documented as working.
 
 **4 — Decide the `.describe()`/`.default()` ordering (§2.3).** Either read
 through the `ZodDefault` wrapper in `nopy.prompts.ts`, or fix the ordering in all
@@ -708,7 +726,7 @@ one whole module, and two functions describe code that no longer exists.
 worst — its README belongs to a different cube, and its `deploy.py` does not run
 at all (§6.1).
 
-**7 — Secrets on stdout (§4.2, §6.4).** Drop the `console.log` in
-`Variables.assign`, mask the password in the executor's debug line and in the
+**7 — Secrets on stdout (§4.2, §6.4).** The `console.log` in `Variables.assign`
+is gone. Still open: mask the password in the executor's debug line and in the
 dry-run plan, and pass `--user`/`--password` as argv rather than interpolating
 into a shell string.

@@ -41,3 +41,16 @@ This document tracks the major refactoring of the `nopy` package.
     - `Cube` is a class encapsulating a `Manifest` and runtime info (`dir`, `deployScript`).
 - **Proposed Solution**: (Done)
 
+### 5. Make `--use-defaults` operational
+- **Status**: ✅ Completed
+- **Goal**: Turn `-D` from a flag that was parsed and threaded through three layers but never read into a working non-interactive mode.
+- **Rationale**: Unattended runs — CI, or provisioning a fresh box from a checked-in `.nopyrc.json` — are the reason the flag exists. It prompted anyway.
+- **Context**:
+    - `BuildContext.resolveCube` branches on `options.useDefaults` and skips `VariableAssignment`.
+    - `Variables.get()` merge order corrected to defaults → global `env` → prompts → params. `env` used to lose to the schema default, which left a non-interactive run with no way to be configured at all.
+    - Replayed session values moved from the `defaults` scope to `prompts`, so they keep outranking `env` now that `env` sits higher.
+    - `Cube.getDefaults()` no longer discards every default when one field lacks `.default()`; it falls back to a per-field read.
+    - `Cube.requiredKeys()` added, and a `-D` run fails naming the unfillable variables instead of deploying a cube with them absent from `--data`.
+    - `VariableAssignment` offers every schema key, not only the ones carrying a default, and shows the value the run would actually use as the initial.
+- **Proposed Solution**: (Done)
+

@@ -169,13 +169,19 @@ export async function VariableAssignment<S extends AnyObjectSchema>(
   variables: Variables
 ) {
   const schema = cube.manifest.schema.shape;
-  const defaults = cube.getDefaults();
+  const defaults = cube.getDefaults() as Record<string, unknown>;
+  const params = variables.get(cube.id, 'params');
+  const resolved = variables.get(cube.id);
   const variablesToConfigure: Record<string, unknown> = {};
 
-  for (const [key, defaultValue] of Object.entries(defaults)) {
-    if (variables.get(cube.id, 'params')[key] === undefined) {
-      variablesToConfigure[key] = defaultValue;
-    }
+  // Every schema key is offered, not just the ones carrying a `.default()` — a
+  // field without one is precisely the field that has to be asked about. Keys a
+  // dependency or hook already supplied are left alone. The value shown is the
+  // one the run would otherwise use, so `env` from `.nopyrc.json` is visible
+  // (and editable) rather than silently overridden by whatever is typed.
+  for (const key of Object.keys(schema)) {
+    if (params[key] !== undefined) continue;
+    variablesToConfigure[key] = resolved[key] ?? defaults[key];
   }
 
   if (Object.keys(variablesToConfigure).length === 0) return;

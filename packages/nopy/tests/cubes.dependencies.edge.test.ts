@@ -104,6 +104,99 @@ describe('BuildContext session replay', () => {
   });
 });
 
+describe('BuildContext --use-defaults', () => {
+  const withDefaults = (cube: Cube, variables = new Variables(), cfg = config) =>
+    new BuildContext(
+      { [cube.id]: cube },
+      variables,
+      session(),
+      cfg,
+      { method: 'ssh' },
+      { useDefaults: true }
+    );
+
+  it('skips the prompts and deploys the schema defaults', async () => {
+    const cube = testCube('cube-a', z.object({ PORT: z.string().default('3000') }));
+    const context = withDefaults(cube);
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(VariableAssignment).not.toHaveBeenCalled();
+    expect(context.deployCalls[0].env.PORT).toBe('3000');
+  });
+
+  it('lets global env steer the run', async () => {
+    const cube = testCube('cube-a', z.object({ PORT: z.string().default('3000') }));
+    const context = withDefaults(cube, new Variables({ PORT: '8080' }));
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.deployCalls[0].command.join(' ')).toContain('--data "PORT=8080"');
+  });
+
+  it('refuses to run a cube whose variable nothing can supply', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string(), PSK: z.string() }));
+    const context = withDefaults(cube);
+
+    await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
+      /Cube "cube-a" cannot run with --use-defaults: SSID, PSK have no default values/
+    );
+    expect(context.deployCalls).toHaveLength(0);
+  });
+
+  it('names a single missing variable in the singular', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+
+    await expect(withDefaults(cube).resolveCube('cube-a', 'host1')).rejects.toThrow(
+      'SSID has no default value'
+    );
+  });
+
+  it('accepts a required variable supplied by global env', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+    const context = withDefaults(cube, new Variables({ SSID: 'home' }));
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.deployCalls[0].env.SSID).toBe('home');
+  });
+
+  it('accepts a required variable supplied by a dependency', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+    const context = withDefaults(cube);
+
+    await context.resolveCube('cube-a', 'host1', { SSID: 'from-dep' });
+
+    expect(context.deployCalls[0].env.SSID).toBe('from-dep');
+  });
+
+  it('still resolves dependencies and hooks', async () => {
+    const dep = testCube('dep');
+    const main = new Cube(
+      Manifest.create({
+        id: 'main',
+        name: 'Main',
+        schema: z.object({ FLAG: z.boolean().default(true) }),
+        dependencies: (vars: Record<string, unknown>) => (vars.FLAG ? ['dep'] : []),
+      }),
+      '/test/main',
+      'deploy.py'
+    );
+    const context = new BuildContext(
+      { dep, main },
+      new Variables(),
+      session(),
+      config,
+      { method: 'ssh' },
+      { useDefaults: true }
+    );
+
+    await context.resolveCube('main', 'host1');
+
+    expect(context.deployCalls.map((c) => c.cube)).toEqual(['dep', 'main']);
+  });
+});
+
 describe('BuildContext command construction', () => {
   const build = (auth: { method: string; username?: string; password?: string }) => {
     const context = new BuildContext(

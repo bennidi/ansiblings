@@ -32,10 +32,31 @@ export class BuildContext {
       password?: string;
     },
     public readonly options: {
+      /** Skip the variable prompts and take whatever the non-interactive scopes hold. */
       useDefaults?: boolean;
       isSessionReplay?: boolean;
     } = {}
   ) {}
+
+  /**
+   * Fails a non-interactive run that cannot fill a required variable.
+   *
+   * Without this the cube would be deployed with the key simply absent from
+   * `--data`, and the deploy script would read `None` off `host.data`.
+   */
+  private assertVariablesComplete(cube: Cube): void {
+    const resolved = this.variables.get(cube.id);
+    const missing = cube.requiredKeys().filter((key) => resolved[key] === undefined);
+    if (missing.length === 0) return;
+
+    const [one, them] =
+      missing.length === 1 ? ['has no default value', 'it'] : ['have no default values', 'them'];
+    throw new Error(
+      `Cube "${cube.id}" cannot run with --use-defaults: ${missing.join(', ')} ${one}. ` +
+        `Set ${them} under "env" in .nopyrc.json, pass ${them} from a dependency, ` +
+        'or drop --use-defaults to be prompted.'
+    );
+  }
 
   /**
    * Resolves a cube, its dependencies, and hooks recursively
@@ -60,10 +81,15 @@ export class BuildContext {
 
     // 2. Variable collection
     if (this.options.isSessionReplay) {
+      // Recorded answers go back into the scope they came from, so a replay
+      // reproduces them even when `env` sets the same key to something else.
       const sessionCube = this.session.cubes.find((c) => c.key === cubeId);
       if (sessionCube) {
-        this.variables.assign(cubeId, 'defaults', sessionCube.variables);
+        this.variables.assign(cubeId, 'prompts', sessionCube.variables);
       }
+    } else if (this.options.useDefaults) {
+      log.debug('Skipping prompts, using defaults', { cubeId });
+      this.assertVariablesComplete(cube);
     } else {
       await VariableAssignment(cube, this.variables);
     }

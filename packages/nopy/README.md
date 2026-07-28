@@ -108,10 +108,14 @@ Variable defaults are defined directly in the Zod schema using `.default()`. Thi
 
 1. Zod schema `.default()` values
 2. Global `env` from `.nopyrc.json`
-3. Accumulated variables from dependencies
-4. User prompts / session replay
+3. User prompts, or the recorded answers on session replay
+4. Variables passed in by a dependency or a hook
 
-This allows cubes to ship with reasonable defaults while still allowing users to override them globally via `.nopyrc.json` or interactively during deployment.
+This allows cubes to ship with reasonable defaults while still allowing users to override them globally via `.nopyrc.json` or interactively during deployment. Because `env` outranks the schema, `.nopyrc.json` is also what steers a run started with `--use-defaults`, which never prompts.
+
+3 and 4 rarely compete: a key a dependency supplies is left out of the prompt entirely, so the user is only ever asked about the keys nothing else has set.
+
+A field declared without `.default()` has none of sources 1 and 2 to fall back on. It is prompted for like any other, with an empty initial value — but a run that cannot prompt (`--use-defaults`) fails on it unless `env` or a dependency provides it.
 
 ### Configuration
 
@@ -294,6 +298,25 @@ nopy
 nopy install --use-defaults
 # or
 nopy install -D
+```
+
+Skips the per-cube variable form. Every variable is taken from the sources that
+need no interaction — the Zod `.default()`, `env` in `.nopyrc.json`, and values
+handed over by a dependency or a hook — which is what makes `.nopyrc.json` the
+place to configure an unattended run.
+
+Cube selection, host and authentication are still asked for; there is nowhere
+else for them to come from. Pair `-D` with `-K` to skip the auth question too,
+or with `-R` / `-H` / `-l`, which supply all three from the recorded session.
+
+A cube whose schema declares a field with **no** `.default()` cannot be filled in
+this way, so the run stops before anything is deployed rather than passing the
+variable as empty:
+
+```
+Error: Cube "net:wifi:connection" cannot run with --use-defaults: SSID, PASSWORD
+have no default values. Set them under "env" in .nopyrc.json, pass them from a
+dependency, or drop --use-defaults to be prompted.
 ```
 
 **Use SSH key authentication**:

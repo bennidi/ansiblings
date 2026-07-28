@@ -83,6 +83,24 @@ export namespace Manifest {
 }
 
 /**
+ * Reads the `.default()` off a schema field, unwrapping the wrappers that may
+ * sit above it (`.default().optional()`, `.default().nullable()`).
+ *
+ * Returns `undefined` for a field that declares no default — which is also how
+ * `requiredKeys()` recognises a field the user has to supply.
+ */
+function defaultValueOf(zodType: z.ZodType): unknown {
+  if (zodType instanceof z.ZodDefault) {
+    const { defaultValue } = zodType._def as { defaultValue: unknown };
+    return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+  }
+  if (zodType instanceof z.ZodOptional || zodType instanceof z.ZodNullable) {
+    return defaultValueOf(zodType._def.innerType as z.ZodType);
+  }
+  return undefined;
+}
+
+/**
  * A fully loaded cube with its filesystem location and runtime state
  */
 export class Cube<Schema extends AnyObjectSchema = AnyObjectSchema> {
@@ -101,14 +119,35 @@ export class Cube<Schema extends AnyObjectSchema = AnyObjectSchema> {
   }
 
   /**
-   * Returns default values for the cube's schema
+   * Returns default values for the cube's schema.
+   *
+   * Parsing an empty object resolves every default in one go, but it fails
+   * outright as soon as one field has no `.default()`. Falling back to a
+   * per-field read keeps the defaults that *are* declared instead of dropping
+   * the whole set — a single required field used to leave the cube with no
+   * variables at all.
    */
   getDefaults(): z.infer<Schema> {
-    try {
-      return this.manifest.schema.parse({});
-    } catch {
-      return {} as z.infer<Schema>;
+    const parsed = this.manifest.schema.safeParse({});
+    if (parsed.success) return parsed.data as z.infer<Schema>;
+
+    const defaults: Record<string, unknown> = {};
+    for (const [key, zodType] of Object.entries(this.manifest.schema.shape)) {
+      const value = defaultValueOf(zodType);
+      if (value !== undefined) defaults[key] = value;
     }
+    return defaults as z.infer<Schema>;
+  }
+
+  /**
+   * Schema keys that have to be supplied from somewhere: no `.default()`, and
+   * not optional. Nothing else can fill them in, so a run that cannot prompt
+   * has to fail rather than deploy a cube with the value missing.
+   */
+  requiredKeys(): string[] {
+    return Object.entries(this.manifest.schema.shape)
+      .filter(([, zodType]) => !zodType.safeParse(undefined).success)
+      .map(([key]) => key);
   }
 }
 
