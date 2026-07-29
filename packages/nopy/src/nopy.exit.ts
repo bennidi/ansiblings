@@ -4,7 +4,7 @@
  */
 
 /** Parting words. Printed whenever a run ends because the user asked it to. */
-export const FAREWELL = 'Bye Bye Honeypie';
+export const FAREWELL = 'Bye Bye HoneyPy';
 
 /** Conventional exit code for "terminated by SIGINT" — 128 + 2. */
 export const CANCELLED_EXIT_CODE = 130;

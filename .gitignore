@@ -1,5 +1,8 @@
 .vault
 .vagrant
+# Persistent SSH host key for the dev VM — a real private key, and machine-local
+# anyway (see the Vagrantfile).
+.vagrant-hostkeys
 .python-version
 
 node_modules
