@@ -13,6 +13,8 @@
     "test": "pnpm -r run test",
     "test:coverage": "pnpm -r run test:coverage",
     "coverage:summary": "node scripts/coverage-summary.mjs",
+    "registry:status": "node scripts/registry-status.mjs",
+    "try:snapshot": "node scripts/try-snapshot.mjs",
     "typecheck": "tsc --build",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

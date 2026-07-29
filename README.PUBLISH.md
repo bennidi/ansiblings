@@ -14,6 +14,9 @@ shipped. If you only want to cut a release, jump to
 - [Secrets](#secrets)
 - [Registry authentication in the workflows](#registry-authentication-in-the-workflows)
 - [Installing the packages](#installing-the-packages)
+- [Resolving from Gitea in this repo](#resolving-from-gitea-in-this-repo)
+- [Testing a snapshot before you release](#testing-a-snapshot-before-you-release)
+- [Upgrading an installed CLI](#upgrading-an-installed-cli)
 - [Design decisions](#design-decisions)
 - [Checking things locally](#checking-things-locally)
 - [Troubleshooting](#troubleshooting)
@@ -176,14 +179,39 @@ and `continue-on-error: true` — and can never be the reason a run goes red.
 
 | Source                                    | Version                       | Registry     | dist-tag |
 | ----------------------------------------- | ----------------------------- | ------------ | -------- |
-| push to `main`                            | `1.0.0-main.42.g736c012`      | Gitea        | `main`   |
-| tag `nopy-v1.2.0`                         | `1.2.0`                       | Gitea, npmjs | `latest` |
-| tag `nopy-v1.2.0-rc.1`                    | `1.2.0-rc.1`                  | Gitea, npmjs | `next`   |
+| push to `main`                            | `0.5.0-main.42.g736c012`      | Gitea        | `main`   |
+| tag `nopy-v0.6.0`                         | `0.6.0`                       | Gitea, npmjs | `latest` |
+| tag `nopy-v0.6.0-rc.1`                    | `0.6.0-rc.1`                  | Gitea, npmjs | `next`   |
 
 The rule for the dist-tag is mechanical: a version containing a prerelease part
 (anything with a `-` in it) goes out as `next` and is marked as a prerelease on
 the Gitea release; anything else goes out as `latest`. There is no way to publish
 a prerelease over `latest` by accident.
+
+### Why 0.x and not 1.0.0-alphaN
+
+The packages used to be numbered `1.0.0-alpha5`, `1.0.0-alpha0` and so on. Every
+one of those is a prerelease, so the rule above sent every release to `next` and
+**`latest` never moved**. That is a quiet failure rather than a loud one: on
+npmjs `latest` happened to point at `1.0.0-alpha5` only because npmjs sets
+`latest` on a package's *first* publish whatever `--tag` says, and it would have
+stayed pinned there through every subsequent alpha. On Gitea, which has no such
+fallback, `latest` did not exist at all — and `npm view @bitsquare/nopy` against
+a registry with no `latest` prints nothing and exits **0**, so it looks like a
+successful lookup of a package with no data.
+
+`0.x.y` says the same thing about stability that `1.0.0-alphaN` was trying to
+say, while leaving the prerelease slot free for actual release candidates. So
+`latest` rolls on every release, `next` means what it says, and no dist-tag has
+to be moved by hand.
+
+> **One-off consequence of the switch.** `1.0.0-alpha5` is semver-*greater* than
+> any `0.x`, and it is already on npmjs. Publishing `0.5.0` moves the `latest`
+> tag to it correctly, but the alpha remains the numerically highest version on
+> the registry. Install with an explicit tag (`npm i -g @bitsquare/nopy@latest`,
+> which follows the tag and will downgrade), not with `npm update -g`. Consider
+> `npm deprecate '@bitsquare/nopy@1.0.0-alpha5' 'Superseded by the 0.x line'` so
+> nobody lands on it by pinning.
 
 ## Snapshots
 
@@ -391,6 +419,170 @@ To track snapshots in another project:
 pnpm add @bitsquare/nopy@main
 ```
 
+> Always map the **scope**, never set a bare `registry=`. The Gitea registry
+> serves `@bitsquare` packages and does not proxy npmjs, so a global
+> `--registry` sends `commander`, `execa`, `zod` and everything else to a
+> registry that has never heard of them. The CLI's own `self-update` builds
+> `--@bitsquare:registry=<url>` for the same reason.
+
+## Resolving from Gitea in this repo
+
+This repository ships a root [`.npmrc`](.npmrc) that maps the scope:
+
+```ini
+@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+```
+
+So any npm or pnpm command run from inside the repo resolves `@bitsquare/*` from
+Gitea, with no flags — including a global install, since npm reads the project
+`.npmrc` for those too:
+
+```sh
+npm install -g @bitsquare/nopy@main       # the newest snapshot, no flags needed
+```
+
+This is not a trade against npmjs. Gitea is a strict **superset** of it for this
+scope: `release.yml` publishes to both, `publish-snapshot.yml` pushes a `main`
+snapshot to Gitea on every push, and today three of the four packages exist
+*only* there. Pointing the scope at Gitea gains the snapshots and loses nothing.
+
+`.npmrc` is otherwise gitignored — the publish workflows write credentials into
+`.npmrc-gitea` / `.npmrc-release` — so `.gitignore` carries a `!/.npmrc`
+negation for the root file specifically. **It contains the scope mapping and
+nothing else.** Reads are anonymous; no token belongs in a committed file.
+
+It cannot affect `pnpm install`: every `@bitsquare` dependency in the workspace
+is a `workspace:*` range that resolves to a `link:`, so nothing in the tree is
+ever fetched from that scope. Verified with `pnpm install --frozen-lockfile`.
+
+Two consequences worth knowing:
+
+- **An untagged install resolves to nothing.** Gitea currently publishes no
+  `latest` dist-tag, so `npm i -g @bitsquare/nopy` finds no version — and npm
+  reports that by printing nothing and exiting 0. Always name a tag (`@main`,
+  `@next`) until the first `0.x` release lands. See
+  [Why 0.x and not 1.0.0-alphaN](#why-0x-and-not-100-alphan).
+- **Bare lookups now answer for Gitea.** `npm view @bitsquare/nopy …` run from
+  the repo queries Gitea. Pass `--registry https://registry.npmjs.org/` when you
+  specifically mean npmjs.
+
+To see both registries at once — which versions exist where, and which are on
+Gitea only and therefore still testable and still un-published:
+
+```sh
+pnpm run registry:status
+pnpm run registry:status -- --json
+```
+
+Working **outside** the repo, set the same mapping globally once:
+
+```sh
+npm config set @bitsquare:registry https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+npm config delete @bitsquare:registry     # back to npmjs
+```
+
+`nopy self-update` reads that key too (`npm config get @bitsquare:registry`), so
+a CLI installed from Gitea keeps checking Gitea for its own updates with nothing
+else configured.
+
+### Why the publish jobs delete it
+
+A scoped mapping is not just another way to say `--registry`. For a **scoped**
+package npm resolves `@scope:registry` *before* `registry`, so the scoped key
+wins no matter how the plain one was set — including on the command line. And a
+project `.npmrc` outranks the userconfig the workflows write.
+
+Left in place, that combination silently redirects the npmjs release lane:
+
+```console
+$ pnpm publish --tag latest --access public --registry https://registry.npmjs.org/ --dry-run
+📦 @bitsquare/nopy@0.5.0 → https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+```
+
+Not hypothetical — that is the workflow's own command, measured. The
+`npm view … --registry <npmjs>` idempotency guard inverts the same way: it
+answers from Gitea, finds the version already there, and **skips the npmjs
+publish entirely**. A release that reports success and shipped nothing.
+
+Both publish workflows therefore `rm -f .npmrc` right after checkout, and every
+publish and lookup names its registry as `--@bitsquare:registry=<url>`. Either
+fix alone is sufficient — both are verified independently — and the pair means a
+command added later cannot quietly inherit the wrong registry. Nothing else in
+the job is affected: every `@bitsquare` range in the workspace is `workspace:*`,
+so no install resolves through that scope.
+
+## Testing a snapshot before you release
+
+Every push to `main` publishes a snapshot, so the rehearsal for a release is to
+install one the way a stranger would:
+
+```sh
+pnpm run try:snapshot                                  # @main from Gitea
+pnpm run try:snapshot -- --tag latest                  # a release, from Gitea
+pnpm run try:snapshot -- --registry https://registry.npmjs.org/
+pnpm run try:snapshot -- --keep                        # keep the directory
+```
+
+`scripts/try-snapshot.mjs` builds a throwaway project in a temp directory,
+points the `@bitsquare` scope at the registry, installs `@bitsquare/nopy` and
+`@bitsquare/cubes-core` at that tag, and then:
+
+- asserts the installed `nopy` declares a **concrete** `nopy-cube` version
+  rather than a leaked `workspace:*` range;
+- prints the three resolved versions, so you can see which commit you are on;
+- runs `nopy --version`;
+- runs `nopy install -P -D` with stdin closed and asserts the cube-selection
+  prompt listed cubes from the bundle — which only happens if the loader
+  resolved the package out of `node_modules` and imported every manifest.
+
+It uses **npm**, not pnpm, on purpose: npm is the client that rejects a leaked
+`workspace:` range, so a clean install here is the stronger proof. This is the
+check `verify-pack.mjs` cannot be — that one inspects a local tarball, this one
+goes to the real registry and runs the real binary.
+
+The directory is deleted on success and left behind on failure, with its path
+printed.
+
+## Upgrading an installed CLI
+
+Both CLIs can update themselves:
+
+```sh
+nopy self-update
+keyman self-update
+```
+
+Each derives its channel from the version it is running — a `-main.` prerelease
+came from the snapshot workflow, any other prerelease from `next`, a clean
+version from `latest` — so an upgrade keeps you on the channel you installed
+from instead of quietly moving you to another one. The registry comes from
+`npm config get @bitsquare:registry`, so an install from Gitea checks Gitea
+without any further configuration. The package manager is detected from the
+install path (npm, pnpm, yarn or bun), so the update does not leave two copies
+on the `PATH`.
+
+```sh
+nopy self-update --dry-run          # print the command, change nothing
+nopy self-update --force            # reinstall even when up to date
+nopy self-update --channel next     # switch channel
+nopy self-update --registry <url>   # check somewhere else
+```
+
+Once a day each CLI checks its channel at startup and prints a one-line hint to
+**stderr** when something newer exists — never stdout, so `--json` and
+`--print-only` stay machine-readable. Results are cached in
+`~/.nopy/update-check.json` and `~/.keyman/update-check.json`; an unreachable
+registry gets 1.5 seconds and is then ignored. The check is off whenever `CI` is
+set, and `NOPY_NO_UPDATE_CHECK=1` / `KEYMAN_NO_UPDATE_CHECK=1` turn it off
+explicitly. `NOPY_REGISTRY`, `NOPY_REGISTRY_TOKEN` and `NOPY_PACKAGE_MANAGER`
+(and the `KEYMAN_` equivalents) override the three things it detects.
+
+The logic lives in `packages/nopy/src/nopy.update.ts` and
+`packages/keyman/src/keyman.update.ts` — two near-identical copies. keyman
+shares no internal library with nopy by design, and a fifth workspace package
+for ~250 lines would add another edge to the publish order for nothing. If a
+third CLI appears, extract it then.
+
 ## Design decisions
 
 **Every publish is idempotent.** Each step asks the registry whether that exact
@@ -452,6 +644,19 @@ node scripts/publish-order.mjs             # the order to release in
 node scripts/linked-deps.mjs packages/nopy # what must be on the registry first
 ```
 
+See what is on each registry, and which versions Gitea has that npmjs does not:
+
+```sh
+pnpm run registry:status
+```
+
+Rehearse an install against a registry that has actually been published to —
+see [Testing a snapshot](#testing-a-snapshot-before-you-release):
+
+```sh
+pnpm run try:snapshot
+```
+
 Rehearse an install the way a stranger gets one, without publishing anything.
 Use **npm**, not pnpm: npm is the one that rejects a leaked `workspace:` range,
 so a clean install here is the real proof.
@@ -475,13 +680,24 @@ nopy --help
 npm unlink -g @bitsquare/nopy
 ```
 
-Check that a version is not already taken before you tag:
+Check that a version is not already taken before you tag. The repo's `.npmrc`
+points the scope at Gitea, so the bare lookup answers for Gitea and npmjs is the
+one that needs the explicit flag:
 
 ```sh
-npm view @bitsquare/nopy@1.2.0 version                    # npmjs
-npm view @bitsquare/nopy@1.2.0 version \
-  --registry https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+npm view @bitsquare/nopy@1.2.0 version                                          # Gitea
+npm view @bitsquare/nopy@1.2.0 version --registry https://registry.npmjs.org/   # npmjs
 ```
+
+Or both registries, every package, in one table:
+
+```sh
+pnpm run registry:status
+```
+
+> `npm view <name>@<version>` exits 1 for a version that does not exist, so it is
+> a sound check. `npm view <name>` — no version — is **not**: against a registry
+> with no `latest` tag it prints nothing and exits 0.
 
 ## Troubleshooting
 

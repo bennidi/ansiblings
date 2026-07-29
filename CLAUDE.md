@@ -32,6 +32,8 @@ pnpm run lint                # biome check .          (lint:fix / lint:ci varian
 pnpm test                    # vitest run, every package with tests
 pnpm run test:coverage       # vitest with the coverage gate
 pnpm run coverage:summary    # renders the last coverage run as a Markdown table
+pnpm run registry:status     # what is on Gitea vs npmjs, and what is Gitea-only
+pnpm run try:snapshot        # install a published snapshot into a temp project and run it
 ```
 
 Single package / single test:
@@ -208,9 +210,79 @@ result with Zod and falls back to defaults instead of throwing. `VAULT_ROOT` in
 the environment beats the config file. Encryption shells out to `age` /
 `age-keygen` / `ssh-keygen`, which must be on `PATH`.
 
+### Updating
+
+`nopy.update.ts` and `keyman.update.ts` are two near-identical copies of one
+module: derive the channel from the running version (`-main.` → `main`, any
+other prerelease → `next`, clean → `latest`), resolve the registry from
+`npm config get @bitsquare:registry`, read `dist-tags` off the packument with a
+plain `fetch`, compare with semver. Nothing about the channel is stored — the
+version you are running is the one piece of state that is always right, so an
+upgrade cannot silently move you to a different channel.
+
+They back a `self-update` subcommand and a once-a-day startup check whose hint
+goes to **stderr**, so `--json` and `--print-only` stay machine-readable. The
+cache is `~/.nopy/update-check.json` / `~/.keyman/update-check.json`; a
+mismatched channel or registry in the cache is never treated as fresh. The
+check is disabled whenever `CI` is set.
+
+The install command uses `--@bitsquare:registry=<url>`, never `--registry`:
+Gitea serves the `@bitsquare` scope and does **not** proxy npmjs, so a global
+`--registry` would send every transitive dependency to a registry that has never
+heard of them. Verified — `npm i -g @bitsquare/nopy@main --@bitsquare:registry=…`
+pulls `nopy-cube` from Gitea and the other 55 packages from npmjs. pnpm accepts
+the same flag; the `npm_config_@bitsquare:registry` env var does not work with
+pnpm and is not used.
+
+The duplication between the two modules is deliberate: keyman shares no internal
+library with nopy, and a fifth workspace package for ~250 lines would add
+another edge to the publish order. Extract it if a third CLI appears.
+
 ## Releasing
 
 Tag-driven, one package at a time; see `README.PUBLISH.md`.
+
+### Registry resolution
+
+The repo commits a root `.npmrc` mapping `@bitsquare:registry` to the Gitea
+registry, so every npm/pnpm command run from the repo — global installs
+included, since npm reads the project file for those too — resolves the scope
+from Gitea. `.gitignore` ignores `.npmrc` generally (the workflows write
+credentials to `.npmrc-gitea` / `.npmrc-release`) and carries a `!/.npmrc`
+negation for the root file, which holds the mapping and no token.
+
+Not a trade against npmjs: Gitea is a strict superset for this scope, since
+`release.yml` publishes to both and `publish-snapshot.yml` adds a `main`
+snapshot per push. It cannot affect `pnpm install` either — every `@bitsquare`
+range in the workspace is `workspace:*` resolving to `link:`, so nothing in the
+tree is fetched from that scope.
+
+Two consequences: a bare `npm view @bitsquare/…` from the repo now answers for
+**Gitea**, and an *untagged* install resolves to nothing, because Gitea
+publishes no `latest` tag yet — always name `@main` or `@next`.
+`pnpm run registry:status` prints both registries side by side and marks the
+versions Gitea has that npmjs does not.
+
+The sharp edge is in CI. `@scope:registry` is resolved *before* `registry` for a
+scoped package, so the scoped key beats a `--registry` flag; and a project
+`.npmrc` outranks the userconfig the workflows write. With the committed file in
+place, `pnpm publish --registry <npmjs>` was measured uploading to **Gitea**, and
+the `npm view --registry <npmjs>` guard answered from Gitea and skipped the npmjs
+publish. Both workflows now `rm -f .npmrc` after checkout *and* pass
+`--@bitsquare:registry=<url>` on every publish and lookup; either alone is
+sufficient, and both were verified with `pnpm publish --dry-run`. This is the
+same reason `self-update` never emits a bare `--registry`.
+
+**Versions are `0.x.y`, not `1.0.0-alphaN`.** The dist-tag rule in `release.yml`
+is mechanical — anything with a `-` goes out as `next` — so while every package
+carried an `alphaN` suffix, `latest` never moved. `latest` on npmjs pointed at
+`1.0.0-alpha5` only because npmjs sets it on a package's *first* publish
+regardless of `--tag`; on Gitea it did not exist at all. Note that `npm view
+<name>` against a registry with no `latest` tag prints nothing and exits **0**,
+which is why this looked like a working lookup. (`npm view <name>@<version>`
+does exit 1 for a missing version, so the workflows' idempotency guards are
+fine.) All four packages were reset to `0.5.0`; `1.0.0-alpha5` stays the
+numerically highest version on npmjs, so install with an explicit `@latest`.
 
 - Push to `main` → `publish-snapshot.yml` publishes every package to the Gitea
   registry as `<version>-main.<run>.g<sha>` under the `main` dist-tag. The
@@ -248,17 +320,25 @@ Three things the `workspace:*` links added, all of them non-obvious:
 built pyinfra command, so `log.verbosity` / `log.debug` in `.nopyrc.json`
 currently have no effect. Treat `docs/REFACTORING.md` as a plan, not a record.
 
-The publish-lane changes above have been verified locally (pack, npm-install of
-the tarballs into a throwaway tree, run) but have **never run against the Gitea
-registry**. Burn a throwaway version there before the first real release.
+The publish lane has now run against the Gitea registry: all four packages are
+there under `@main`, and `pnpm run try:snapshot` installs them into a throwaway
+project with npm and runs the binary. The npmjs lane has only ever published
+`@bitsquare/nopy`; `keyman`, `nopy-cube` and `cubes-core` have never been
+released there, so the *check linked deps are released* guard in `release.yml`
+will stop the first `nopy` release until `nopy-cube` ships.
 
 Nothing checks that a bundle and the CLI reading it are compatible versions;
 `nopy.engines` was considered and deferred. `docs/CUBE-PACKAGES.md` is where all
 of this came from and is now a record of what was built, including what differed
 from the plan.
 
-`docs/API.md` predates several refactors and still describes `Cube` and
-`Manifest` as plain interfaces with a `key` field; the code has a `Cube` class
-keyed on `id`. The `cubePackages` and `CubeSource` sections added for this work
-are accurate; treat the rest of that file with suspicion. `DOCS-AUDIT.md` tracks
-the wider drift.
+`docs/API.md` was regenerated against the source and now covers every export in
+`src/index.ts` plus the authoring package; its *Known gaps* section is the short
+list of behaviour that surprises a reader (`--json` printing nothing on success,
+`DeployCall.dependencies` always empty, `ExecutionResult.stdout` never populated,
+no cycle detection, and `self-update` reporting an empty dist-tag as an
+unreachable registry). `CubePackageRef` is referenced by the exported
+`NopyConfig` but is not itself re-exported, so a consumer cannot name the type —
+one line, not yet fixed. `DOCS-AUDIT.md` tracks the drift in the remaining
+documents; §2.9 (the nopy README shipping yarn-workspace instructions to npmjs)
+is closed, so the keyman README (§2.10) is now the worst of them.

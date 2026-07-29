@@ -45,6 +45,18 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      - name: Drop the repo's Gitea scope mapping
+        # The committed .npmrc points @bitsquare at Gitea so local work resolves
+        # snapshots. It must not survive into a publish job: it is a *project*
+        # config, which outranks both the userconfig the steps below write and a
+        # `--registry` flag, because `@scope:registry` is more specific than
+        # `registry`. Left in place, `pnpm publish --registry <npmjs>` uploads to
+        # Gitea and `npm view --registry <npmjs>` answers from Gitea — so the
+        # npmjs release silently publishes nowhere and then skips itself.
+        # Measured, not assumed. The checkout is disposable; each step below
+        # names its registry explicitly anyway.
+        run: rm -f .npmrc
+
       - name: Resolve the release from the tag
         id: target
         run: |
@@ -129,7 +141,9 @@ jobs:
           # to read, which this step does not have yet.
           missing=0
           for spec in $(node scripts/linked-deps.mjs "$DIR" | tr ' ' '@'); do
-            if npm view "$spec" version --registry "$NPMJS_REGISTRY" >/dev/null 2>&1; then
+            # Scoped, not `--registry`: `@scope:registry` outranks it, so a bare
+            # flag can be silently overridden by any project-level .npmrc.
+            if npm view "$spec" version --@bitsquare:registry="$NPMJS_REGISTRY" >/dev/null 2>&1; then
               echo "${spec} is published"
             else
               echo "::error::${NAME} depends on ${spec}, which is not on npmjs. Release it first."
@@ -171,13 +185,18 @@ jobs:
           } >> "$NPMRC"
           export npm_config_userconfig="$NPMRC"
 
-          if npm view "${NAME}@${VERSION}" version --registry "$GITEA_REGISTRY" >/dev/null 2>&1; then
+          if npm view "${NAME}@${VERSION}" version --@bitsquare:registry="$GITEA_REGISTRY" >/dev/null 2>&1; then
             echo "${NAME}@${VERSION} is already on Gitea — skipping."
           else
             # pnpm, not npm: npm ships `workspace:*` verbatim and the install
             # then fails with EUNSUPPORTEDPROTOCOL. --no-git-checks because a
             # tag build is a detached HEAD.
-            (cd "$DIR" && pnpm publish --ignore-scripts --no-git-checks --tag "$DIST_TAG" --registry "$GITEA_REGISTRY")
+            #
+            # The registry is named as `--@bitsquare:registry`, not `--registry`.
+            # Every package here is scoped, and for a scoped package npm resolves
+            # `@scope:registry` ahead of `registry` — so a bare flag loses to any
+            # project .npmrc that sets the scoped key.
+            (cd "$DIR" && pnpm publish --ignore-scripts --no-git-checks --tag "$DIST_TAG" --@bitsquare:registry="$GITEA_REGISTRY")
           fi
 
       - name: Publish to npmjs
@@ -195,12 +214,17 @@ jobs:
           } >> "$NPMRC"
           export npm_config_userconfig="$NPMRC"
 
-          if npm view "${NAME}@${VERSION}" version --registry "$NPMJS_REGISTRY" >/dev/null 2>&1; then
+          if npm view "${NAME}@${VERSION}" version --@bitsquare:registry="$NPMJS_REGISTRY" >/dev/null 2>&1; then
             echo "${NAME}@${VERSION} is already on npmjs — skipping."
           else
             # No --provenance: that needs GitHub Actions OIDC, which Gitea has no
             # equivalent for.
-            (cd "$DIR" && pnpm publish --ignore-scripts --no-git-checks --tag "$DIST_TAG" --access public --registry "$NPMJS_REGISTRY")
+            #
+            # Scoped flag, as above — and it matters most here. With a bare
+            # `--registry` this line was measured uploading to Gitea whenever a
+            # project .npmrc mapped the scope, which is the one mistake npmjs
+            # will not let you take back.
+            (cd "$DIR" && pnpm publish --ignore-scripts --no-git-checks --tag "$DIST_TAG" --access public --@bitsquare:registry="$NPMJS_REGISTRY")
           fi
 
       - name: Remove the registry credentials
@@ -279,5 +303,8 @@ jobs:
             echo "### Released \`${NAME}@${VERSION}\` (\`${DIST_TAG}\`)"
             echo ""
             echo "- npmjs: \`npm install -g ${NAME}@${VERSION}\`"
-            echo "- Gitea: \`npm install -g ${NAME}@${VERSION} --registry ${GITEA_REGISTRY}\`"
+            # Scoped, never a bare `--registry`: Gitea serves @bitsquare only and
+            # does not proxy npmjs, so a bare flag sends every transitive
+            # dependency to a registry that has never heard of them.
+            echo "- Gitea: \`npm install -g ${NAME}@${VERSION} --@bitsquare:registry=${GITEA_REGISTRY}\`"
           } >> "$GITHUB_STEP_SUMMARY"

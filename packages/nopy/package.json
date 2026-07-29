@@ -1,6 +1,6 @@
 {
   "name": "@bitsquare/nopy",
-  "version": "1.0.0-alpha5",
+  "version": "0.5.0",
   "description": "A system to simplify pyinfra script management and execution.",
   "keywords": [
     "pyinfra",
@@ -61,11 +61,13 @@
     "execa": "^10.0.0",
     "fuzzy": "^0.1.3",
     "inquirer": "^14.0.2",
+    "semver": "^7.8.5",
     "zod": "^4.4.3",
     "zx": "^8.8.5"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.10",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",

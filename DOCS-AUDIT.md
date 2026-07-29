@@ -17,8 +17,14 @@ state.
 Findings closed since are marked **✅ … fixed** and keep their original text as
 the record of what was wrong. So far: §1.1 (`--use-defaults`), §2.2
 (`getDefaults()`), §2.1 (precedence — the second half closed differently than
-proposed), §4.2 (password on stdout — points 1 and 2 of 3), §4.3 (what a session
-records), part of §3.5 (dead exports), and one bullet of §6.4.
+proposed), §3 in full (`docs/API.md`, regenerated), §4.2 (password on stdout —
+points 1 and 2 of 3), §4.3 (what a session records), §2.9 (the nopy README's
+yarn install instructions), and one bullet of §6.4.
+
+Closing §3 also settled the documentation half of several findings elsewhere
+without touching their underlying cause: §1.2, §1.3, §1.5, §2.3, §2.7, §4.4 and
+§6.5 are each now stated accurately in `docs/API.md`, but the code still behaves
+as those findings describe and they stay open.
 
 ---
 
@@ -26,7 +32,7 @@ records), part of §3.5 (dead exports), and one bullet of §6.4.
 
 - [1. Documented features that do not exist](#1-documented-features-that-do-not-exist)
 - [2. Documented behaviour that differs from the code](#2-documented-behaviour-that-differs-from-the-code)
-- [3. `docs/API.md` — systematic drift](#3-docsapimd--systematic-drift)
+- [3. ✅ `docs/API.md` — systematic drift — fixed](#3--docsapimd--systematic-drift--fixed)
 - [4. Undocumented behaviour](#4-undocumented-behaviour)
 - [5. Cube documentation](#5-cube-documentation)
 - [6. Defects found while verifying](#6-defects-found-while-verifying)
@@ -135,6 +141,10 @@ not. Two cubes that depend on each other recurse until the stack overflows —
 `resolvedCubes` is only consulted in `buildDeployCall`, which runs *after* the
 recursive call. `docs/API.md:160` still promises `Error` "if ... circular
 dependency detected".
+
+> The `API.md` promise is gone (§3): the regenerated file states that ordering
+> falls out of the recursion and that there is no cycle detection. The README
+> claims and the missing detection itself both stand.
 
 ---
 
@@ -256,6 +266,11 @@ anyone copying it gets bare `UPDATE` / `PACKAGES` keys as prompt labels instead
 of the sentences they wrote. `docs/API.md:610` happens to use the working order —
 the two documents disagree, and neither mentions that it matters.
 
+> `docs/API.md` now says so explicitly, next to its manifest example, with the
+> zod 4.4.3 measurement (§3). The README example and the 15 affected manifests
+> are untouched, and the one-line fix in `nopy.prompts.ts` — read through the
+> `ZodDefault` wrapper — is still the better answer.
+
 15 of the 22 cubes in `cubes/` are affected; among them
 `net:tailscale` (all 4 fields), `runtime:nodevm` (all 4), `user:add` (all 4),
 `ssh:keygen` (all 4) and `admin:locale` (all 4).
@@ -333,7 +348,14 @@ hooks, presenting explicit parameters as a hook-only capability.
 `params` scope that `exec()` writes to. The two mechanisms are identical in this
 respect; per §2.1 both outrank user prompts.
 
-### 2.9 🟠 nopy README installation section describes the wrong package manager
+### 2.9 ✅ nopy README installation section describes the wrong package manager — **fixed**
+
+> **Resolved.** The yarn-workspace block is gone. The section now opens with
+> `npm install -g @bitsquare/nopy` (and the pnpm equivalent), documents the
+> `latest` / `next` / `main` channels, shows the `@bitsquare` scope mapping
+> needed to install from Gitea, and gains an *Upgrading* section covering
+> `nopy self-update` and the `NOPY_*` env vars. The finding below is kept as the
+> record of what was wrong.
 
 `README.md:248-279` says "This package is part of a **yarn** workspace monorepo",
 then gives `yarn install`, `yarn workspace @bitsquare/nopy build`,
@@ -388,7 +410,30 @@ first.
 
 ---
 
-## 3. `docs/API.md` — systematic drift
+## 3. ✅ `docs/API.md` — systematic drift — **fixed**
+
+> **Resolved by regenerating the file**, which is what §3's own recommendation
+> asked for — the drift was structural rather than a set of stale lines, so
+> patching would have left the shape wrong. Every export in `src/index.ts` was
+> re-read against its source and the file now covers all of them: the authoring
+> package as its own section, `BuildContext` in place of the phantom Builder
+> Module, and the variables, history and prompts modules that had no entry at
+> all. The findings below are kept as the record of what was wrong.
+>
+> Three things were deliberately added rather than merely corrected. A
+> **Known gaps** section states the behaviour a reader would otherwise take on
+> trust — `logConfigToFlags` being unconsumed (§1.3), `--json` printing nothing
+> on success (§1.2), the absent cycle detection (§1.5, §6.5), `DeployCall.dependencies`
+> always being `[]`, `ExecutionResult.stdout`/`stderr` never being populated, and
+> hook variables not being schema-validated (§2.7). The `.describe()`/`.default()`
+> ordering hazard (§2.3) is called out where the manifest example lives, with the
+> zod 4.4.3 measurement. And `-P` is documented alongside the rest of the CLI
+> (§4.4 — the README half of that finding stands).
+>
+> One thing surfaced while writing it and is **not** fixed: `CubePackageRef` is
+> referenced by the exported `NopyConfig` but is not itself re-exported from
+> `src/index.ts`, so a consumer cannot name the type. Recorded in the file as a
+> note.
 
 `docs/API.md` documents an earlier architecture. It is not a matter of
 individual stale lines: the two central type definitions, one whole module, and
@@ -786,8 +831,11 @@ deletion, but neither can stay documented as working.
 through the `ZodDefault` wrapper in `nopy.prompts.ts`, or fix the ordering in all
 14 manifests and the README example. The first is one line and cannot regress.
 
-**5 — Regenerate `docs/API.md` (§3).** Too far gone to patch: two core types,
-one whole module, and two functions describe code that no longer exists.
+**5 — ~~Regenerate `docs/API.md` (§3).~~ Done.** Rewritten against the source
+rather than patched, and extended to the exports that never had an entry
+(variables, history, prompts, the authoring package). One new finding came out of
+it: `CubePackageRef` is not re-exported from `src/index.ts` although `NopyConfig`
+refers to it — a one-line fix, left for whoever next touches the export list.
 
 **6 — Cube docs (§5) and the two missing READMEs.** `service/autostart` is the
 worst — its README belongs to a different cube, and its `deploy.py` does not run

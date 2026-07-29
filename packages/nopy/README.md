@@ -333,36 +333,97 @@ Writing cubes to publish is covered in [CUBE-BUNDLES.md](docs/CUBE-BUNDLES.md).
 
 ### Installation
 
-This package is part of a yarn workspace monorepo. Install from the repository root:
-
 ```bash
-# From repository root (/ansiblings)
-yarn install
-yarn workspace @bitsquare/nopy build
+npm install -g @bitsquare/nopy
 ```
 
-To use the `nopy` command globally, you can:
+The cubes live in a separate bundle, installed into whichever project describes
+your infrastructure and named in its `.nopyrc.json`:
 
-1. **Use yarn workspace command**:
+```bash
+pnpm add -D @bitsquare/cubes-core
+```
 
-   ```bash
-   yarn workspace @bitsquare/nopy nopy
-   ```
+```json
+{ "hosts": ["your-host"], "cubePackages": ["@bitsquare/cubes-core"] }
+```
 
-2. **Link the package globally**:
+#### Channels
 
-   ```bash
-   cd packages/nopy
-   npm link
-   # Now you can use 'nopy' from anywhere
-   nopy install
-   ```
+Three dist-tags are published, and the one you install from is the one you stay
+on until you ask otherwise:
 
-3. **Use via npm scripts** (from packages/nopy directory):
+| Channel  | What it is                                | Registry     |
+| -------- | ----------------------------------------- | ------------ |
+| `latest` | the current release — the default         | npmjs, Gitea |
+| `next`   | a prerelease (`0.6.0-rc.1`)               | npmjs, Gitea |
+| `main`   | a snapshot of every commit on `main`      | Gitea only   |
 
-   ```bash
-   yarn nopy
-   ```
+```bash
+npm install -g @bitsquare/nopy          # latest
+npm install -g @bitsquare/nopy@next     # prereleases
+```
+
+Snapshots come from the Gitea registry. Point the **scope** at it rather than
+setting a bare `registry=`, because that registry serves `@bitsquare` packages
+only and does not proxy npmjs — everything else must keep resolving from npmjs:
+
+```bash
+npm install -g @bitsquare/nopy@main \
+  --@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+```
+
+Or, persistently, in `~/.npmrc`:
+
+```ini
+@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
+```
+
+Reading from Gitea needs no token while the repository is public.
+
+### Upgrading
+
+```bash
+nopy self-update
+```
+
+That checks the channel your installed version came from, on the registry your
+npm config points at, and re-runs the package manager that installed you (npm,
+pnpm, yarn or bun — detected from the install path). Options:
+
+```bash
+nopy self-update --dry-run          # print the command, change nothing
+nopy self-update --force            # reinstall even when up to date
+nopy self-update --channel next     # switch channel
+nopy self-update --registry <url>   # check somewhere else
+```
+
+The plain package-manager equivalent works too. Prefer `@latest` over
+`npm update -g`, which resolves against the range recorded at install time:
+
+```bash
+npm install -g @bitsquare/nopy@latest
+```
+
+Once a day, `nopy` checks its channel in the background and prints a one-line
+hint to **stderr** when a newer version exists — never to stdout, so `--json`
+and `--print-only` output stay clean. The answer is cached in
+`~/.nopy/update-check.json`; a registry that is slow or unreachable is given
+1.5 seconds and then ignored.
+
+| Variable                | Effect                                        |
+| ----------------------- | --------------------------------------------- |
+| `NOPY_NO_UPDATE_CHECK=1`| disable the startup check (also off when `CI` is set) |
+| `NOPY_REGISTRY`         | check a specific registry                     |
+| `NOPY_REGISTRY_TOKEN`   | bearer token, for a private registry          |
+| `NOPY_PACKAGE_MANAGER`  | force `npm`/`pnpm`/`yarn`/`bun` for the install |
+
+### Running from a checkout
+
+```bash
+pnpm install
+pnpm --filter @bitsquare/nopy run nopy     # runs the CLI from source via tsx
+```
 
 ### Basic Commands
 

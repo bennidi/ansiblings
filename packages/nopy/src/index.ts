@@ -66,6 +66,35 @@ export {
 export type { AuthSession, CubeSession, NopySession } from './nopy.session.js';
 // Session management
 export { createSession, listSessions, loadSession, saveSession } from './nopy.session.js';
+export type {
+  Channel,
+  CommandRunner,
+  PackageManager,
+  SelfUpdateResult,
+  UpdateCache,
+  UpdateStatus,
+} from './nopy.update.js';
+// Update checking and self-update
+export {
+  buildSelfUpdateCommand,
+  channelForVersion,
+  checkForUpdate,
+  DEFAULT_CHECK_INTERVAL_MS,
+  detectPackageManager,
+  fetchChannelVersion,
+  formatCommand,
+  formatUpdateNotice,
+  getUpdateCachePath,
+  isUpdateCheckDisabled,
+  NPMJS_REGISTRY,
+  normalizeRegistry,
+  PACKAGE_NAME,
+  readUpdateCache,
+  resolveRegistry,
+  selfUpdate,
+  updateNotice,
+  writeUpdateCache,
+} from './nopy.update.js';
 export type { WorkflowOptions, WorkflowResult } from './nopy.workflow.js';
 // Workflow
 export {

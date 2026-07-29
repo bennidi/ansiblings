@@ -1,6 +1,6 @@
 {
   "name": "@bitsquare/keyman",
-  "version": "1.0.0",
+  "version": "0.5.0",
   "description": "A system to simplify ssh key management",
   "keywords": [
     "ssh",
@@ -55,10 +55,12 @@
   "dependencies": {
     "execa": "^10.0.0",
     "inquirer": "^14.0.2",
+    "semver": "^7.8.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.10",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",

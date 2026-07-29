@@ -16,8 +16,21 @@ import {
   listHistory,
 } from './nopy.history.js';
 import { nopy } from './nopy.main.js';
+import type { Channel } from './nopy.update.js';
+import { formatCommand, selfUpdate, updateNotice } from './nopy.update.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
+
+/**
+ * Prints the update hint to stderr, so it never lands in `--json` output or in
+ * a `--print-only` command list being piped somewhere.
+ */
+async function printUpdateNotice(): Promise<void> {
+  const notice = await updateNotice({ currentVersion: version });
+  if (notice) {
+    console.error(`\n${notice}\n`);
+  }
+}
 
 const program = new Command();
 
@@ -63,6 +76,8 @@ program
   .option('-j, --json', 'Output results as JSON')
   .option('--no-history', 'Do not save this session to history')
   .action(async (options) => {
+    await printUpdateNotice();
+
     // Loaded lazily so that --help/--version work outside a configured project.
     const execConfig = loadConfig().execution ?? {};
     const continueOnError = options.continueOnError ?? execConfig.continueOnError ?? false;
@@ -148,6 +163,47 @@ program
   .action(() => {
     clearHistory();
     console.log('Session history cleared.');
+  });
+
+program
+  .command('self-update')
+  .description('Update nopy to the newest version on your channel')
+  .alias('upgrade')
+  .option('-n, --dry-run', 'Show the install command without running it')
+  .option('-f, --force', 'Reinstall even when already up to date')
+  .option('--channel <tag>', 'Check a specific channel (latest, next, main)')
+  .option('--registry <url>', 'Install from a specific registry')
+  .action(async (options) => {
+    try {
+      const result = await selfUpdate({
+        currentVersion: version,
+        channel: options.channel as Channel | undefined,
+        registry: options.registry,
+        dryRun: options.dryRun,
+        force: options.force,
+      });
+
+      const { status } = result;
+      console.log(`Installed: ${status.current}`);
+      console.log(`Channel:   ${status.channel}`);
+      console.log(`Registry:  ${status.registry}`);
+      console.log(`Available: ${status.latest ?? 'unknown'}`);
+      console.log('');
+
+      if (result.ran) {
+        console.log(`Updated to ${status.latest}.`);
+      } else if (options.dryRun) {
+        console.log(`Would run: ${formatCommand(result.command)}`);
+      } else if (status.latest === null) {
+        console.error(`Could not reach ${status.registry} — nothing was changed.`);
+        process.exit(1);
+      } else {
+        console.log('Already up to date.');
+      }
+    } catch (error) {
+      console.error('Update failed:', error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
   });
 
 program.parse();

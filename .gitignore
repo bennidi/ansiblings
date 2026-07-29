@@ -22,3 +22,8 @@ tsconfig.tsbuildinfo
 .npmrc
 .npmrc-*
 release.json
+
+# ...except the repo-root .npmrc, which is checked in on purpose: it holds the
+# @bitsquare -> Gitea scope mapping and nothing else. Credentials live in the
+# .npmrc-* files above, which stay ignored.
+!/.npmrc

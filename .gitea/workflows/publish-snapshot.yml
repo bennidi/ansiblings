@@ -35,6 +35,14 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      - name: Drop the repo's Gitea scope mapping
+        # See the same step in release.yml. This job only ever targets Gitea, so
+        # the committed file happens to agree with it — but it agrees by
+        # accident, and a project-level `@bitsquare:registry` silently outranks
+        # the userconfig written below. Removing it keeps the registry a
+        # property of the step rather than of the checkout.
+        run: rm -f .npmrc
+
       - name: Set up pnpm
         # Version comes from `packageManager` in the root package.json.
         uses: pnpm/action-setup@v4
@@ -124,13 +132,16 @@ jobs:
             version=$(node -p "require('./${dir}/package.json').version")
 
             echo "::group::${name}@${version}"
-            if npm view "${name}@${version}" version --registry "$REGISTRY" >/dev/null 2>&1; then
+            # Scoped, not `--registry`: for a scoped package npm resolves
+            # `@scope:registry` first, so a bare flag loses to any project
+            # .npmrc that sets the scoped key.
+            if npm view "${name}@${version}" version --@bitsquare:registry="$REGISTRY" >/dev/null 2>&1; then
               echo "Already published — skipping (this is a re-run of the same workflow)."
             else
               # pnpm, not npm: npm ships `workspace:*` verbatim and the install
               # then fails with EUNSUPPORTEDPROTOCOL. --no-git-checks because
               # stamping the versions above left the tree dirty.
-              (cd "$dir" && pnpm publish --ignore-scripts --no-git-checks --tag main --registry "$REGISTRY")
+              (cd "$dir" && pnpm publish --ignore-scripts --no-git-checks --tag main --@bitsquare:registry="$REGISTRY")
             fi
             echo "::endgroup::"
 
