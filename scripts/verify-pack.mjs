@@ -3,7 +3,7 @@
 /**
  * Asserts that every publishable package is installable once packed.
  *
- * `@bitsquare/nopy` depends on `@bitsquare/nopy-cube` through `workspace:*`, and
+ * `@bitsquare/nopy` depends on `@bitsquare/nopy-cubes` through `workspace:*`, and
  * `link-workspace-packages` is off, so a plain semver range would resolve from
  * the registry instead of linking the workspace copy — the protocol is not
  * optional. But npm has no idea what `workspace:` means: a tarball that still

@@ -5,7 +5,7 @@
  * project, and runs it.
  *
  * This is the rehearsal that the local `pnpm pack` check cannot be: it goes to
- * the real registry, resolves the real `@bitsquare/nopy-cube` version that
+ * the real registry, resolves the real `@bitsquare/nopy-cubes` version that
  * `pnpm publish` baked into the tarball, and puts a real `nopy` binary on disk.
  * A tarball that installs here is one a user can install.
  *
@@ -26,7 +26,7 @@ import path from 'node:path';
 const SCOPE = '@bitsquare';
 const DEFAULT_REGISTRY = 'https://gitea.bitsquare.dev/api/packages/BitSquare/npm/';
 const CLI_PACKAGE = '@bitsquare/nopy';
-const BUNDLE_PACKAGE = '@bitsquare/cubes-core';
+const BUNDLE_PACKAGE = '@bitsquare/nopy-cubes-core';
 
 const args = process.argv.slice(2);
 
@@ -101,17 +101,17 @@ try {
 
   // The whole point of packing with pnpm: this must be a concrete version, not
   // the literal string `workspace:*`.
-  const linked = installed.dependencies?.['@bitsquare/nopy-cube'];
+  const linked = installed.dependencies?.['@bitsquare/nopy-cubes'];
   if (!linked || linked.startsWith('workspace:')) {
     throw new Error(
-      `${CLI_PACKAGE} declares nopy-cube as "${linked}" — a workspace range escaped.`
+      `${CLI_PACKAGE} declares nopy-cubes as "${linked}" — a workspace range escaped.`
     );
   }
 
   console.log('\n--- versions ---');
   console.log(`${CLI_PACKAGE}@${installed.version}`);
   console.log(`${BUNDLE_PACKAGE}@${bundle.version}`);
-  console.log(`  -> @bitsquare/nopy-cube ${linked}`);
+  console.log(`  -> @bitsquare/nopy-cubes ${linked}`);
 
   console.log('\n--- nopy --version ---');
   console.log(capture(path.join(dir, 'node_modules', '.bin', 'nopy'), ['--version']));
@@ -139,7 +139,7 @@ try {
       [
         ...discovery
           .replace(ansi, '')
-          .matchAll(/([a-z0-9:_-]+) - [^\n]*\(@bitsquare\/cubes-core\)/g),
+          .matchAll(/([a-z0-9:_-]+) - [^\n]*\(@bitsquare\/nopy-cubes-core\)/g),
       ].map((match) => match[1])
     ),
   ];

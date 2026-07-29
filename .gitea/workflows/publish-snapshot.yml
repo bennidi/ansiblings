@@ -116,7 +116,7 @@ jobs:
 
           # Pass 1: stamp every manifest before anything is packed. `pnpm
           # publish` substitutes `workspace:*` with the version the linked
-          # package declares at pack time, so nopy-cube has to be carrying its
+          # package declares at pack time, so nopy-cubes has to be carrying its
           # snapshot version by the time nopy is packed.
           for dir in $dirs; do
             base=$(node -p "require('./${dir}/package.json').version")

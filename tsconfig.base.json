@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "paths": {
       "@bitsquare/nopy": ["./packages/nopy/src"],
-      "@bitsquare/nopy-cube": ["./packages/nopy-cube/src"],
+      "@bitsquare/nopy-cubes": ["./packages/nopy-cubes/src"],
       "@bitsquare/keyman": ["./packages/keyman/src"]
     }
   },

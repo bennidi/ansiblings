@@ -7,18 +7,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A pnpm workspace holding two independently published CLIs, the authoring package
 their deployment units are written against, and one bundle of those units:
 
-| Path                  | Package                | Binary   | Role                                                     |
-| --------------------- | ---------------------- | -------- | -------------------------------------------------------- |
-| `packages/nopy`       | `@bitsquare/nopy`      | `nopy`   | interactive pyinfra script management and execution      |
-| `packages/keyman`     | `@bitsquare/keyman`    | `keyman` | SSH key management, shelling out to `age` / `ssh-keygen` |
-| `packages/nopy-cube`  | `@bitsquare/nopy-cube` | —        | the authoring surface a `manifest.mjs` imports           |
-| `packages/cubes-core` | `@bitsquare/cubes-core`| —        | the core cube bundle (22 cubes), no TypeScript           |
+| Path                       | Package                      | Binary   | Role                                                      |
+| -------------------------- | ----------------------------- | -------- | -------------------------------------------------------- |
+| `packages/nopy`            | `@bitsquare/nopy`            | `nopy`   | interactive pyinfra script management and execution      |
+| `packages/keyman`          | `@bitsquare/keyman`          | `keyman` | SSH key management, shelling out to `age` / `ssh-keygen` |
+| `packages/nopy-cubes`      | `@bitsquare/nopy-cubes`      | —        | the authoring surface a `manifest.mjs` imports           |
+| `packages/nopy-cubes-core` | `@bitsquare/nopy-cubes-core` | —        | the core cube bundle (22 cubes), no TypeScript           |
 
 The root package is private; everything under `packages/` ships. `keyman` stands
-alone, but `nopy` and `cubes-core` both depend on `nopy-cube` (`workspace:*`), so
+alone, but `nopy` and `nopy-cubes-core` both depend on `nopy-cubes` (`workspace:*`), so
 publish order matters — see *Releasing*.
 
-`cubes-core` is consumed the way a third party would consume it: the root
+`nopy-cubes-core` is consumed the way a third party would consume it: the root
 `.nopyrc.json` names it in `cubePackages`, and the loader reads it out of
 `node_modules`. There is no `cubes/` directory at the repo root any more.
 
@@ -76,11 +76,11 @@ locally and on the runner. Barrel files (`src/index.ts`, `src/cubes/index.ts`,
 `src/nopy.cubes.ts`) and the Commander argv wiring (`src/*.cli.ts`) are excluded;
 adding logic to those files means moving it somewhere covered.
 
-nopy's vitest config aliases `@bitsquare/nopy-cube` to that package's **source**,
+nopy's vitest config aliases `@bitsquare/nopy-cubes` to that package's **source**,
 not to the workspace link (which points at a `dist` that only exists after a
 build), so the gate does not depend on build ordering and can never run against a
-stale artefact. The same config excludes `**/nopy-cube/**` from coverage — without
-it nopy's numbers absorb another package's files. `cubes-core` has no tests of its
+stale artefact. The same config excludes `**/nopy-cubes/**` from coverage — without
+it nopy's numbers absorb another package's files. `nopy-cubes-core` has no tests of its
 own; the loader tests in nopy cover the contract it implements.
 
 The three TS packages set `pool: 'forks'` because tests use `process.chdir()` — most
@@ -184,15 +184,15 @@ items 6 and 7.
 A cube directory holds `manifest.mjs` + `deploy.py`; anything else in it is
 ignored by the loader but reachable from the script, which runs with the cube
 directory as its cwd. Manifests are ESM, import `Manifest` from
-`@bitsquare/nopy-cube`, and declare `id`, `name`, a Zod `schema` (each field
+`@bitsquare/nopy-cubes`, and declare `id`, `name`, a Zod `schema` (each field
 `.describe()`d — the description is the prompt label — and `.default()`ed), plus
 optional `secrets`/`dependencies`/`before`/`after`.
 
-Import from **`@bitsquare/nopy-cube`**, not `@bitsquare/nopy`. The authoring
+Import from **`@bitsquare/nopy-cubes`**, not `@bitsquare/nopy`. The authoring
 surface is types and a factory, with zod as its only peer — no CLI, no prompts,
 no process spawning — so a bundle can depend on it without dragging the CLI in.
 `@bitsquare/nopy` re-exports all of it (`cubes.Manifest`, `cubes.uniqid`, …), so
-the older form still works; every cube in `packages/cubes-core` has been moved to
+the older form still works; every cube in `packages/nopy-cubes-core` has been moved to
 the new one.
 
 Manifests are resolved by ordinary Node resolution **from the manifest's own
@@ -200,7 +200,7 @@ directory**, which used to mean a hand-written local cube failed with
 `ERR_MODULE_NOT_FOUND` unless you linked the package. `cubes/resolve-hook.mjs`
 retires that: `loadCubes()` registers a `module.register()` resolve hook that
 tries normal resolution *first* and only on failure falls back to resolving
-`@bitsquare/nopy-cube`, `@bitsquare/nopy` and `zod` from the running CLI's own
+`@bitsquare/nopy-cubes`, `@bitsquare/nopy` and `zod` from the running CLI's own
 `node_modules`. Ordinary-resolution-first is the load-bearing part — a cube that
 ships its own zod keeps it. The hook is a convenience, never load-bearing:
 registration is wrapped in a `try`, and a bundle installed properly never reaches
@@ -242,7 +242,7 @@ The install command uses `--@bitsquare:registry=<url>`, never `--registry`:
 Gitea serves the `@bitsquare` scope and does **not** proxy npmjs, so a global
 `--registry` would send every transitive dependency to a registry that has never
 heard of them. Verified — `npm i -g @bitsquare/nopy@main --@bitsquare:registry=…`
-pulls `nopy-cube` from Gitea and the other 55 packages from npmjs. pnpm accepts
+pulls `nopy-cubes` from Gitea and the other 55 packages from npmjs. pnpm accepts
 the same flag; the `npm_config_@bitsquare:registry` env var does not work with
 pnpm and is not used.
 
@@ -330,7 +330,7 @@ Three things the `workspace:*` links added, all of them non-obvious:
   `workspace:` range survived into a tarball. It runs in both publish workflows.
   Note `pnpm pack` has no `--ignore-scripts` flag, so `prepack` does rebuild —
   which means the artefact under test is the one publish ships.
-- **Order.** `packages/*/` sorts `nopy` before `nopy-cube`, which is backwards.
+- **Order.** `packages/*/` sorts `nopy` before `nopy-cubes`, which is backwards.
   `scripts/publish-order.mjs` topologically sorts over the `workspace:` edges;
   the snapshot workflow stamps *every* version first and only then publishes in
   that order, because `pnpm publish` reads the linked package's version at pack
@@ -347,9 +347,9 @@ currently have no effect. Treat `docs/REFACTORING.md` as a plan, not a record.
 The publish lane has now run against the Gitea registry: all four packages are
 there under `@main`, and `pnpm run try:snapshot` installs them into a throwaway
 project with npm and runs the binary. The npmjs lane has only ever published
-`@bitsquare/nopy`; `keyman`, `nopy-cube` and `cubes-core` have never been
+`@bitsquare/nopy`; `keyman`, `nopy-cubes` and `nopy-cubes-core` have never been
 released there, so the *check linked deps are released* guard in `release.yml`
-will stop the first `nopy` release until `nopy-cube` ships.
+will stop the first `nopy` release until `nopy-cubes` ships.
 
 Nothing checks that a bundle and the CLI reading it are compatible versions;
 `nopy.engines` was considered and deferred. `docs/CUBE-PACKAGES.md` is where all

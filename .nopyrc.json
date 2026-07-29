@@ -1,7 +1,7 @@
 {
   "hosts": [],
   "cubeDirs": [],
-  "cubePackages": ["@bitsquare/cubes-core"],
+  "cubePackages": ["@bitsquare/nopy-cubes-core"],
   "env": {},
   "log": {
     "verbosity": "info",

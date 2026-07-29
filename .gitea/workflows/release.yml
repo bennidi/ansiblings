@@ -1,13 +1,13 @@
 # Tag-driven release of a single package.
 #
 #   git tag nopy-v1.2.0 && git push origin nopy-v1.2.0
-#   git tag nopy-cube-v1.2.0 && git push origin nopy-cube-v1.2.0
+#   git tag nopy-cubes-v1.2.0 && git push origin nopy-cubes-v1.2.0
 #   git tag keyman-v1.2.0 && git push origin keyman-v1.2.0
 #
 # The tag is the source of truth for *which* package ships; package.json is the
 # source of truth for the version, and the two must agree or the run fails.
 #
-# Packages that link to each other release dependency-first — `nopy-cube` before
+# Packages that link to each other release dependency-first — `nopy-cubes` before
 # `nopy` — because the linked version is resolved at pack time. The run refuses
 # to publish otherwise.
 # A version with a prerelease part (1.2.0-rc.1) publishes under `next` instead
@@ -135,7 +135,7 @@ jobs:
           # package declares at this commit. If that version is not on the
           # registry yet, the release installs to a broken tree — and npmjs
           # only lets you unpublish for 72 hours. Release the dependency first:
-          # nopy-cube, then nopy, then any bundle.
+          # nopy-cubes, then nopy, then any bundle.
           #
           # npmjs only: it is the irreversible one, and it needs no credentials
           # to read, which this step does not have yet.

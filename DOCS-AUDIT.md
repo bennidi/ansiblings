@@ -206,7 +206,7 @@ Two pairs are inverted, and both have consequences:
 > to deploy a cube whose required key nothing supplied. Verified against all 22
 > cubes in `cubes/`: 19 build a complete `-D` run, the 3 below abort by name.
 >
-> Re-measured against the 25 cubes now in `packages/cubes-core/cubes`: 20 build a
+> Re-measured against the 25 cubes now in `packages/nopy-cubes-core/cubes`: 20 build a
 > complete `-D` run and 5 abort by name. Two of the additions are deliberate —
 > `user:add` lost its `PUBKEY` default (it was a specific personal key), and
 > `ssh:keygen` inherits that failure because it declares `dependencies: () =>

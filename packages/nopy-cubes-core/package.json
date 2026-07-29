@@ -4,7 +4,7 @@
   "description": "The core nopy cube bundle: apt, users, ssh, networking, services and runtimes.",
   "keywords": [
     "nopy",
-    "nopy-cubess",
+    "nopy-cubes",
     "pyinfra",
     "deployment",
     "infrastructure"

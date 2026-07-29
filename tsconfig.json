@@ -2,7 +2,7 @@
   "extends": "./tsconfig.base.json",
   "files": [],
   "references": [
-    { "path": "./packages/nopy-cube" },
+    { "path": "./packages/nopy-cubes" },
     { "path": "./packages/nopy" },
     { "path": "./packages/keyman" }
   ]

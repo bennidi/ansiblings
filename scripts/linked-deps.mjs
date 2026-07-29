@@ -26,7 +26,7 @@ if (!target) {
 const read = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8'));
 
 // Resolved by name rather than by directory: nothing guarantees that
-// `@bitsquare/nopy-cube` lives in `packages/nopy-cube`.
+// `@bitsquare/nopy-cubes` lives in `packages/nopy-cubes`.
 const versionByName = new Map(
   fs
     .readdirSync(PACKAGES_DIR)

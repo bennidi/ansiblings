@@ -3,7 +3,7 @@
 /**
  * Prints the publishable workspace package directories, dependencies first.
  *
- * `packages/*` in alphabetical order puts `nopy` ahead of the `nopy-cube` it
+ * `packages/*` in alphabetical order puts `nopy` ahead of the `nopy-cubes` it
  * depends on, which leaves a window where the registry holds a package whose
  * dependency does not exist yet. Ordering the publish by the workspace graph
  * closes it. One directory per line, so the caller can `for dir in $(…)`.
