@@ -325,8 +325,9 @@ mirror the path, and they are claimed **globally** — across `cubeDirs`,
 - a duplicate id (the message names every claimant and how each got into the run);
 - a manifest that throws on import, exports a non-object, or has no `name`;
 - a `secrets` entry naming a key that is not in the schema;
-- a package in `cubePackages` that is not installed, cannot be read, or declares
-  no `nopy.cubes`;
+- a package in `cubePackages` that is not installed, cannot be read, has neither a
+  `cubes/` directory nor a `nopy.cubes` override, or whose `nopy.cubes` is not a
+  non-empty array of strings;
 - a `nopy.cubes` entry that does not exist or points outside its package root.
 
 Any of them aborts the run (`nopy.main.ts` returns before the workflow). None is
@@ -380,7 +381,7 @@ const { packages, errors } = resolveCubePackages(config.cubePackages);
 interface CubePackage {
   name: string;    // the name it was requested under
   root: string;    // absolute path to the package root
-  dirs: string[];  // absolute paths, from the package's `nopy.cubes` field
+  dirs: string[];  // absolute paths: `<root>/cubes`, or the package's `nopy.cubes`
 }
 ```
 
@@ -892,8 +893,8 @@ Nothing feeds the result into the built command — see
 const { selectedCubes } = await CubeSelection(cubes);  // string[] of ids
 ```
 
-Multi-select with fuzzy filtering on the rendered label. A cancelled prompt
-returns an empty array rather than throwing.
+Multi-select with fuzzy filtering on the rendered label. A prompt dismissed with
+Escape returns an empty array rather than throwing.
 
 ### `HostSelection(hosts)`
 
@@ -1182,7 +1183,7 @@ Real behaviour that a reader would otherwise take on trust. Tracked in
   `Cube.getDefaults()`, against `{}` — and prompt input is type-coerced, which is
   not the same thing.
 - **Nothing checks bundle/CLI compatibility.** A cube package declares no
-  supported nopy range and the loader reads whatever `nopy.cubes` points at.
+  supported nopy range and the loader scans whatever directories it finds.
 - **`self-update` reports an empty channel as unreachable.** `latest === null`
   means either the request failed *or* the registry answered normally and the
   dist-tag simply has no version — the second is exactly what a Gitea package

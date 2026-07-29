@@ -302,12 +302,12 @@ All three are unioned and scanned the same way. A directory is a cube when it ho
 
 #### Cube packages
 
-A cube package is an ordinary npm package that ships cube directories and points at them from its own `package.json`:
+A cube package is an ordinary npm package that ships its cubes in a `cubes/` directory at its root. That is the whole contract — no nopy-specific `package.json` field is required. A bundle whose cubes live elsewhere (compiled into `dist/cubes`, say) overrides the location:
 
 ```json
 {
-  "name": "@bitsquare/cubes-core",
-  "nopy": { "cubes": ["./cubes"] }
+  "name": "@acme/cubes-web",
+  "nopy": { "cubes": ["./dist/cubes"] }
 }
 ```
 
@@ -321,7 +321,7 @@ pnpm add -D @bitsquare/cubes-core
 { "cubePackages": ["@bitsquare/cubes-core"] }
 ```
 
-Naming a package is a statement that cubes are expected from it, so anything wrong is an error that aborts the run rather than a silent skip: the package is not installed, it declares no `nopy.cubes`, or an entry points at a directory that does not exist or lies outside the package.
+Naming a package is a statement that cubes are expected from it, so anything wrong is an error that aborts the run rather than a silent skip: the package is not installed, it has neither a `cubes/` directory nor a `nopy.cubes` override, its `nopy.cubes` is malformed, or an entry points at a directory that does not exist or lies outside the package.
 
 #### Ids are claimed globally
 

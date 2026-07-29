@@ -165,6 +165,20 @@ jobs:
         # Explicit, so the publish steps can skip lifecycle scripts entirely.
         run: pnpm run build
 
+      - name: Stamp the commit into the manifest
+        # What `nopy --version` annotates itself with. The version is untouched:
+        # this only adds a `buildInfo.commit` key, which npm ignores and which
+        # ships regardless of `files` because package.json is always packed.
+        # Before the pack below, so the artefact under test is the one publish
+        # ships. The tree is left dirty, which is why both publish steps pass
+        # --no-git-checks — they already did, for the detached HEAD.
+        env:
+          DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          set -euo pipefail
+          short_sha=$(git rev-parse --short=7 HEAD)
+          (cd "$DIR" && npm pkg set "buildInfo.commit=${short_sha}")
+
       - name: Verify the packed manifests
         # Packages link to each other with `workspace:*`, which npm cannot
         # install. Proves on the tarball that pack rewrote it.

@@ -108,19 +108,48 @@ describe('resolveCubePackages', () => {
     expect(errors[0]).toMatch(/cannot read/);
   });
 
-  it('reports a package that declares no cubes', () => {
-    install(tmpDir, 'plain', {});
+  it('falls back to cubes/ when the package declares nothing', () => {
+    // The convention. A bundle that ships cubes/ at its root needs no `nopy`
+    // block at all, and one with an unrelated `nopy` block still gets it.
+    const plain = install(tmpDir, 'plain', {});
+    const other = install(tmpDir, 'other', { nopy: { somethingElse: true } });
+
+    const { packages, errors } = resolveCubePackages(
+      ['plain', 'other'].map((spec) => ({ spec, from: tmpDir }))
+    );
+
+    expect(errors).toEqual([]);
+    expect(packages.map((pkg) => pkg.dirs)).toEqual([
+      [path.join(plain, 'cubes')],
+      [path.join(other, 'cubes')],
+    ]);
+  });
+
+  it('reports a package with neither a declaration nor a cubes/ directory', () => {
+    install(tmpDir, 'bare', {}, []);
+
+    const { packages, errors } = resolveCubePackages([{ spec: 'bare', from: tmpDir }]);
+
+    expect(packages).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/has no cubes\/ directory/);
+    expect(errors[0]).toMatch(/declares no "nopy"/);
+  });
+
+  it('reports a malformed declaration instead of falling back to the default', () => {
+    // Each of these ships a usable cubes/ directory. Saying something that does
+    // not parse is not the same as saying nothing, so none of them resolve.
     install(tmpDir, 'empty', { nopy: { cubes: [] } });
     install(tmpDir, 'wrong-type', { nopy: { cubes: 'cubes' } });
     install(tmpDir, 'not-strings', { nopy: { cubes: [1] } });
 
     const { packages, errors } = resolveCubePackages(
-      ['plain', 'empty', 'wrong-type', 'not-strings'].map((spec) => ({ spec, from: tmpDir }))
+      ['empty', 'wrong-type', 'not-strings'].map((spec) => ({ spec, from: tmpDir }))
     );
 
     expect(packages).toEqual([]);
-    expect(errors).toHaveLength(4);
-    for (const error of errors) expect(error).toMatch(/declares no cubes/);
+    expect(errors).toHaveLength(3);
+    for (const error of errors) expect(error).toMatch(/must be a non-empty array of strings/);
   });
 
   it('reports a cube directory that does not exist', () => {

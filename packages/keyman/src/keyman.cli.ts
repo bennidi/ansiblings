@@ -6,7 +6,17 @@ import { keyman } from './keyman.main.js';
 import type { Channel } from './keyman.update.js';
 import { formatCommand, selfUpdate, updateNotice } from './keyman.update.js';
 
-const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
+const { version, buildInfo } = createRequire(import.meta.url)('../package.json') as {
+  version: string;
+  buildInfo?: { commit?: string };
+};
+
+/**
+ * What `--version` prints. `version` itself stays untouched everywhere else —
+ * the commit is an annotation, stamped into `package.json` on the runner by the
+ * publish workflows and absent when running from source.
+ */
+const versionLabel = buildInfo?.commit ? `${version} (${buildInfo.commit})` : version;
 
 const args = process.argv.slice(2);
 
@@ -24,7 +34,7 @@ if (args.includes('--print-config')) {
 }
 
 if (args.includes('--version') || args.includes('-V')) {
-  console.log(version);
+  console.log(versionLabel);
   process.exit(0);
 }
 

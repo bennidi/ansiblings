@@ -22,13 +22,13 @@ The rest of this document is for writing one.
 
 ## What a bundle is
 
-An ordinary npm package that ships cube directories and points at them from its
-own `package.json`. There is no build step, no plugin API and no entry point —
-nopy reads the directories off disk and imports each `manifest.mjs` directly.
+An ordinary npm package that ships its cubes in a `cubes/` directory. There is no
+build step, no plugin API and no entry point — nopy reads the directory off disk
+and imports each `manifest.mjs` directly.
 
 ```
 @acme/cubes-web
-├── package.json          nopy.cubes → ["./cubes"]
+├── package.json          no nopy block needed
 ├── README.md
 └── cubes/
     ├── nginx/
@@ -50,7 +50,6 @@ special-cased.
   "name": "@acme/cubes-web",
   "version": "1.0.0",
   "type": "module",
-  "nopy": { "cubes": ["./cubes"] },
   "files": ["cubes", "!cubes/**/*.log", "README.md", "LICENSE"],
   "publishConfig": { "access": "public" },
   "dependencies": {
@@ -60,10 +59,24 @@ special-cased.
 }
 ```
 
-**`nopy.cubes`** is the only field nopy requires. It is an array of directories,
-relative to the package root, each scanned recursively for cubes. Several
-entries are fine; a single `["./cubes"]` is the norm. Every entry must exist and
-must stay inside the package — a path escaping the root is refused, not resolved.
+**Nothing declares the cubes.** `cubes/` at the package root is the convention,
+scanned recursively, and a bundle that follows it needs no nopy-specific field at
+all. Naming the package in `cubePackages` is already the statement that cubes are
+expected from it.
+
+**`nopy.cubes`** overrides that, for the bundle whose cubes are somewhere else — a
+package compiled from TypeScript sources into `dist/cubes`, say, or one shipping
+two separate trees:
+
+```json
+  "nopy": { "cubes": ["./dist/cubes", "./contrib"] }
+```
+
+It is an array of directories relative to the package root. Every entry must
+exist and must stay inside the package — a path escaping the root is refused, not
+resolved. Present-but-malformed (an empty array, a bare string, non-strings) is an
+error rather than a fall back to the default: saying something that does not parse
+is not the same as saying nothing.
 
 **`type: "module"`** matters: manifests are ESM. Without it a `manifest.mjs` still
 loads (the extension carries the day), but anything it imports relatively will
@@ -222,7 +235,7 @@ Nothing bundle-specific: `npm publish` (or `pnpm publish`) with a version bump.
 Some things worth deciding once:
 
 - **Version the bundle independently of nopy.** There is no compatibility check
-  between the two — the loader reads whatever `nopy.cubes` points at. Document
+  between the two — the loader scans whatever directories it finds. Document
   the nopy version you test against in your README.
 - **Renaming or removing an id is breaking.** It invalidates recorded sessions
   and breaks any manifest listing it as a dependency, including manifests in
@@ -254,8 +267,9 @@ For how this repository releases its own packages, see
 | Symptom | Cause |
 | --- | --- |
 | `Cube package 'X' is not installed (looked up from …)` | Not installed, or installed somewhere other than the config that named it. The path in the message is where the lookup started. |
-| `Cube package 'X' declares no cubes` | Missing or malformed `nopy.cubes` in the package's `package.json`. It must be a non-empty array of strings. |
-| `'./cubes' does not exist in …` | The directory was not packed. Check `files` and `npm pack --dry-run`. |
+| `Cube package 'X' has no cubes/ directory in …` | No `cubes/` at the package root and no `nopy.cubes` pointing elsewhere. Usually the directory was not packed — check `files` and `npm pack --dry-run`. |
+| `"nopy": { "cubes": … } must be a non-empty array of strings` | The override is present but malformed. Fix it, or omit it entirely to use `./cubes`. |
+| `'…' does not exist in …` | A `nopy.cubes` entry pointing at a directory the tarball does not contain. |
 | `'…' points outside the package` | A `nopy.cubes` entry escaping the package root. Not allowed. |
 | `Duplicate cube id 'X' from N sources:` | Two or more cubes claiming one id; the message lists each source. Rename one — there is no precedence rule to lean on. |
 | `ERR_MODULE_NOT_FOUND` for `zod` or `@bitsquare/nopy-cube` | The bundle did not declare them as dependencies. The resolve-hook fallback covers loose local cubes, not published packages. |

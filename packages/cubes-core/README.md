@@ -18,9 +18,9 @@ Then name it in `.nopyrc.json`:
 }
 ```
 
-`nopy` resolves the package from the directory of the config file that named it,
-reads `nopy.cubes` out of its `package.json`, and scans those directories exactly
-as it scans a `cubeDirs` entry. Nothing has to be linked or copied.
+`nopy` resolves the package from the directory of the config file that named it
+and scans its `cubes/` directory exactly as it scans a `cubeDirs` entry. Nothing
+has to be linked or copied.
 
 ## What is in it
 

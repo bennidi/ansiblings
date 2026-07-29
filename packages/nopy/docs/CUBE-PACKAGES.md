@@ -141,7 +141,6 @@ A cube bundle is an npm package with a `nopy` field:
   "name": "@acme/cubes-net",
   "version": "1.0.0",
   "type": "module",
-  "nopy": { "cubes": ["./cubes"] },
   "files": ["cubes", "README.md", "LICENSE"],
   "keywords": ["nopy", "nopy-cubes", "pyinfra"],
   "dependencies": {
@@ -154,10 +153,16 @@ A cube bundle is an npm package with a `nopy` field:
 
 Rules:
 
-- `nopy.cubes` — directories relative to the package root, scanned exactly like
-  `cubeDirs` entries. Required; a package listed in `cubePackages` without a
-  `nopy` field is an error, not a silent skip. Listing it means the user expects
-  cubes from it.
+- **Cube location is a convention, `<root>/cubes`.** *(Amended after Phase 5;
+  originally `nopy.cubes` was a required field.)* The field bought nothing a
+  convention does not: it is not a discovery marker — naming the package in
+  `cubePackages` already is one — and it says nothing about whether the
+  directories were actually packed, which is the failure authors really hit.
+  `nopy.cubes` remains as an **override**, directories relative to the package
+  root, for the bundle whose cubes are elsewhere (`dist/cubes` after a build).
+  Absent means the default; present-and-malformed is an error rather than a fall
+  back. Finding no cube directory at all is still an error, not a silent skip:
+  listing a package means the user expects cubes from it.
 - Both dependencies are **regular dependencies, not peers**, and both are
   load-bearing: a manifest imports `Manifest` from `@bitsquare/nopy-cube` and `z`
   from `zod`. `@bitsquare/nopy-cube` peer-depends on zod, so the bundle's copy is
@@ -255,7 +260,8 @@ Errors (each aborts the run, consistent with the existing `errors` contract):
 
 - package not found on any candidate path
 - `package.json` unparseable
-- no `nopy.cubes`, or it is not a non-empty array of strings
+- neither a `cubes/` directory nor a `nopy.cubes` override
+- `nopy.cubes` present but not a non-empty array of strings
 - a `nopy.cubes` entry escapes the package root, or does not exist
 
 ### Wiring
@@ -625,7 +631,8 @@ runner alike.
 - resolves through a symlinked package directory (mimicking pnpm)
 - resolves from the declaring config's directory, not `cwd`
 - missing package → error naming the spec
-- package without `nopy.cubes` → error
+- package without `nopy.cubes` → falls back to `cubes/`
+- package with neither → error; malformed `nopy.cubes` → error, no fall back
 - `nopy.cubes` entry that does not exist, and one that escapes the root → errors
 - last-wins dedupe when parent and child config both name a package
 

@@ -36,6 +36,15 @@ export {
   outputExecutionPlan,
   summarizeResults,
 } from './nopy.executor.js';
+// Graceful exit
+export {
+  CANCELLED_EXIT_CODE,
+  exitWithFarewell,
+  FAREWELL,
+  installGracefulExit,
+  isCancellation,
+  restoreTerminal,
+} from './nopy.exit.js';
 export type { HistoryEntry, SessionHistory } from './nopy.history.js';
 // History management
 export {

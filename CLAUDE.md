@@ -22,6 +22,13 @@ publish order matters — see *Releasing*.
 `.nopyrc.json` names it in `cubePackages`, and the loader reads it out of
 `node_modules`. There is no `cubes/` directory at the repo root any more.
 
+## Documenting
+
+Be modest. Size the write-up to the change: most work needs none, and a small
+module never earns a section in `docs/API.md`. Where a reason is genuinely
+non-obvious, one comment next to the code beats three paragraphs in a document
+nobody re-reads. Document the surprising, not the obvious.
+
 ## Commands
 
 ```sh
@@ -97,14 +104,19 @@ One pass per invocation, `nopy.main.ts` orchestrating:
    if no config file exists anywhere — which is why `nopy.cli.ts` calls it lazily
    inside the action, so `--help`/`--version` work outside a project.
 2. **`cubes/packages.ts`** — `resolveCubePackages()` turns each `CubePackageRef`
-   into a package root plus the directories its `nopy.cubes` field declares.
+   into a package root plus its cube directories. The location is a **convention**:
+   `<root>/cubes`, so a bundle needs no nopy-specific `package.json` field at all.
+   `nopy.cubes` survives only as an override, for the bundle whose cubes are
+   elsewhere (`dist/cubes` after a build, say) — absent means the default, but
+   present-and-malformed is an error rather than a fall back, since saying
+   something that does not parse is not the same as saying nothing.
    Resolution goes through `createRequire(...).resolve.paths()` + `existsSync`,
    deliberately bypassing the `exports` map: a bundle ships directories and has
    no entry point to declare. `existsSync` also follows the symlink pnpm plants
    at `node_modules/<name>`, which a `readdir` scan skips outright (it reports
    `isSymbolicLink()`, not `isDirectory()`). A missing package, an unreadable
-   manifest, a missing `nopy.cubes`, a directory that does not exist, and an
-   entry pointing outside the package root are all errors, never silent skips.
+   manifest, no cube directory found, and an entry pointing outside the package
+   root are all errors, never silent skips.
    Duplicate refs are deduped here, last-wins, because `mergeValue` only dedupes
    arrays of primitives and these are objects.
 3. **`cubes/loader.ts`** — `findCubeRoots()` unions `config.cubeDirs`, the
@@ -294,6 +306,18 @@ numerically highest version on npmjs, so install with an explicit `@latest`.
   `latest`.
 
 So: bump `packages/<pkg>/package.json`, land it on `main`, then tag that commit.
+
+Both workflows also stamp `buildInfo.commit` (the 7-char sha) into the manifest
+with the same `npm pkg set`, never committed either — the snapshot loop stamps
+every package, and the release step stamps whichever one the tag named. Both
+CLIs append it to `--version` in parentheses — `0.5.0 (ab12cd7)` — and print the
+bare version when the field is absent, which is every run from source. The
+version string itself is untouched: `nopy.cli.ts` and `keyman.cli.ts` decorate
+only the string they print, while `updateNotice()` and `selfUpdate()` keep
+reading the raw `version`, so channel derivation never sees the annotation. An
+unknown top-level key is ignored by npm and `package.json` is always packed, so
+nothing in `files` had to change. The two CLIs are kept in step here for the
+same reason their update modules are duplicated rather than shared.
 
 Three things the `workspace:*` links added, all of them non-obvious:
 

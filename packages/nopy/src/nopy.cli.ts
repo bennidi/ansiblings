@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { loadConfig } from './nopy.config.js';
+import { exitWithFarewell, installGracefulExit, isCancellation } from './nopy.exit.js';
 import {
   clearHistory,
   formatHistoryList,
@@ -19,7 +20,17 @@ import { nopy } from './nopy.main.js';
 import type { Channel } from './nopy.update.js';
 import { formatCommand, selfUpdate, updateNotice } from './nopy.update.js';
 
-const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
+const { version, buildInfo } = createRequire(import.meta.url)('../package.json') as {
+  version: string;
+  buildInfo?: { commit?: string };
+};
+
+/**
+ * What `--version` prints. `version` itself stays untouched everywhere else —
+ * the commit is an annotation, stamped into `package.json` on the runner by the
+ * publish workflows and absent when running from source.
+ */
+const versionLabel = buildInfo?.commit ? `${version} (${buildInfo.commit})` : version;
 
 /**
  * Prints the update hint to stderr, so it never lands in `--json` output or in
@@ -32,11 +43,15 @@ async function printUpdateNotice(): Promise<void> {
   }
 }
 
+// Before anything can open a prompt: a cancelled TUI leaves through
+// nopy.exit, not through node's default unhandled-rejection trace.
+installGracefulExit();
+
 const program = new Command();
 
 program
   .name('nopy')
-  .version(version)
+  .version(versionLabel)
   .description('A CLI tool for pyinfra script management and execution.')
   .addHelpText(
     'after',
@@ -124,6 +139,11 @@ program
         process.exit(1);
       }
     } catch (error) {
+      // A prompt the user backed out of is not a failed run: inquirer rejects
+      // cleanly, so unlike the enquirer case this arrives here rather than at
+      // the process-level handler.
+      if (isCancellation(error)) exitWithFarewell();
+
       if (options.json) {
         console.log(
           JSON.stringify(

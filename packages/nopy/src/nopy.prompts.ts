@@ -83,7 +83,9 @@ export async function AuthSelection(useAuthKey?: boolean): Promise<{
   if (useAuthKey) return { authMethod: 'ssh-key' };
   const answers = await inquirer.prompt([
     {
-      type: 'list',
+      // `select`, not `list`: inquirer 14 dropped the legacy name and rejects
+      // an unknown type outright.
+      type: 'select',
       name: 'authMethod',
       message: 'Select authentication method:',
       choices: ['ssh-key', 'password'],
@@ -118,7 +120,7 @@ export async function PasswordSelection(username: string): Promise<string> {
 export async function HostSelection(hosts: string[]): Promise<string> {
   const selectedHost = await inquirer.prompt([
     {
-      type: 'list',
+      type: 'select',
       name: 'host',
       message: 'Select host from inventory',
       choices: ['docker', 'vagrant', ...hosts, 'custom'],

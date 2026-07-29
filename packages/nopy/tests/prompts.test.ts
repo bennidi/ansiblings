@@ -218,6 +218,32 @@ describe('HostSelection', () => {
   });
 });
 
+describe('question types', () => {
+  it('declares only types the installed inquirer actually ships', async () => {
+    // Checked against the real module, not the mock: `list` was accepted for
+    // years and inquirer 14 dropped it, which took out host selection entirely
+    // — a failure no amount of mocked prompting can see.
+    const actual = await vi.importActual<typeof import('inquirer')>('inquirer');
+    const supported = Object.keys(actual.createPromptModule().prompts);
+
+    inquirerPrompt.mockResolvedValue({ host: 'web-1' });
+    await HostSelection(['web-1']);
+    inquirerPrompt.mockResolvedValue({ authMethod: 'password', username: 'u', password: 'p' });
+    await AuthSelection(false);
+    inquirerPrompt.mockResolvedValue({ password: 'p' });
+    await PasswordSelection('deploy');
+
+    const declared = new Set(
+      inquirerPrompt.mock.calls.flatMap(([asked]: [Record<string, any>[]]) =>
+        asked.map((q) => q.type ?? 'input')
+      )
+    );
+
+    expect(declared.size).toBeGreaterThan(0);
+    expect(supported).toEqual(expect.arrayContaining([...declared]));
+  });
+});
+
 describe('VariableAssignment', () => {
   const schema = z.object({
     port: z.number().default(8080).describe('Listen port'),

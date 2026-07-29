@@ -123,7 +123,10 @@ jobs:
             # `g` prefix keeps the identifier a valid semver one even when the
             # abbreviated sha happens to be all digits.
             version="${base}-main.${{ github.run_number }}.g${short_sha}"
-            (cd "$dir" && npm pkg set "version=${version}")
+            # `buildInfo.commit` is what `nopy --version` annotates itself with.
+            # An unknown top-level key is ignored by npm and package.json is
+            # always in the tarball, so it ships without any `files` change.
+            (cd "$dir" && npm pkg set "version=${version}" "buildInfo.commit=${short_sha}")
           done
 
           # Pass 2: publish.
