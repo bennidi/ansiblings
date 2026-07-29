@@ -5,7 +5,7 @@
 
 import module from 'node:module';
 import path from 'node:path';
-import { Cube, type CubeSource, type LoadResult, type Manifest } from '@bitsquare/nopy-cube';
+import { Cube, type CubeSource, type LoadResult, type Manifest } from '@bitsquare/nopy-cubes';
 import { z } from 'zod';
 import { fs } from 'zx';
 import { loadConfig } from '../nopy.config.js';
@@ -15,7 +15,7 @@ let hookRegistered = false;
 
 /**
  * Installs the fallback resolver that lets a manifest in a bare directory
- * import `@bitsquare/nopy-cube` or `zod` — see `resolve-hook.mjs`.
+ * import `@bitsquare/nopy-cubes` or `zod` — see `resolve-hook.mjs`.
  *
  * `module.register()` is process-global and cannot be undone, so this runs once
  * and only when cubes are about to be imported. Registration failing is not

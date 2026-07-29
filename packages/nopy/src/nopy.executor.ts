@@ -3,7 +3,7 @@
  * @module nopy.executor
  */
 
-import type { DependencySpec } from '@bitsquare/nopy-cube';
+import type { DependencySpec } from '@bitsquare/nopy-cubes';
 import { getLogger } from '@logtape/logtape';
 import { execa } from 'execa';
 import { MASK } from './nopy.common.js';

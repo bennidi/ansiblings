@@ -2,7 +2,7 @@
  * Tests for cubes/dependencies module (BuildContext)
  */
 
-import { Cube, Manifest } from '@bitsquare/nopy-cube';
+import { Cube, Manifest } from '@bitsquare/nopy-cubes';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { BuildContext } from '../src/cubes/dependencies.js';

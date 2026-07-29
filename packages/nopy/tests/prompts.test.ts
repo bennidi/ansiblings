@@ -37,7 +37,7 @@ vi.mock('enquirer', () => ({
   },
 }));
 
-import { Cube, Manifest } from '@bitsquare/nopy-cube';
+import { Cube, Manifest } from '@bitsquare/nopy-cubes';
 import { Variables } from '../src/nopy.common.js';
 import {
   AuthSelection,

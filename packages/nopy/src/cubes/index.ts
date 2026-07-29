@@ -17,7 +17,7 @@ export type {
   Hook,
   HookContext,
   LoadResult,
-} from '@bitsquare/nopy-cube';
+} from '@bitsquare/nopy-cubes';
 export {
   Cube,
   createManifest,
@@ -26,7 +26,7 @@ export {
   uniqid,
   zodInner,
   zodKind,
-} from '@bitsquare/nopy-cube';
+} from '@bitsquare/nopy-cubes';
 // Dependencies
 export { BuildContext } from './dependencies.js';
 // Loader

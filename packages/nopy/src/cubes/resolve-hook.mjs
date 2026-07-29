@@ -5,7 +5,7 @@
  * A manifest is loaded with `import(manifestPath)`, so its imports resolve from
  * its own directory. A cube sitting in an arbitrary `cubeDirs` entry — no
  * package.json above it, no node_modules beside it — therefore cannot import
- * `@bitsquare/nopy-cube` or `zod` at all, and the run dies on
+ * `@bitsquare/nopy-cubes` or `zod` at all, and the run dies on
  * ERR_MODULE_NOT_FOUND before a single deploy is built.
  *
  * A published cube bundle never reaches this: it declares its own dependencies
@@ -25,7 +25,7 @@ import { pathToFileURL } from 'node:url';
  * be expected to install for itself. Anything else stays a hard failure — a
  * cube that wants a library should depend on it.
  */
-const FALLBACK_ROOTS = ['@bitsquare/nopy-cube', '@bitsquare/nopy', 'zod'];
+const FALLBACK_ROOTS = ['@bitsquare/nopy-cubes', '@bitsquare/nopy', 'zod'];
 
 /** @type {NodeRequire | undefined} */
 let fallbackRequire;

@@ -1,7 +1,7 @@
 # Nopy API Reference
 
 The public surface of **`@bitsquare/nopy`** (the CLI and its library exports) and
-of **`@bitsquare/nopy-cube`** (the authoring package a `manifest.mjs` imports).
+of **`@bitsquare/nopy-cubes`** (the authoring package a `manifest.mjs` imports).
 
 Everything below was checked against the source. Where the code does something a
 reader would not expect — a field that is always empty, a function nothing calls
@@ -10,14 +10,14 @@ reader would not expect — a field that is always empty, a function nothing cal
 
 If you are writing cubes rather than calling nopy from code, you want
 [CUBE-BUNDLES.md](CUBE-BUNDLES.md) and [HOOKS.md](HOOKS.md); only the
-[Authoring API](#authoring-api-bitsquarenopy-cube) section here applies to you.
+[Authoring API](#authoring-api-bitsquarenopy-cubes) section here applies to you.
 
 ---
 
 ## Table of Contents
 
 - [Two packages](#two-packages)
-- [Authoring API (`@bitsquare/nopy-cube`)](#authoring-api-bitsquarenopy-cube)
+- [Authoring API (`@bitsquare/nopy-cubes`)](#authoring-api-bitsquarenopy-cubes)
 - [Main Module](#main-module)
 - [Cubes Module](#cubes-module)
 - [Variables Module](#variables-module)
@@ -38,15 +38,15 @@ If you are writing cubes rather than calling nopy from code, you want
 
 | Package | Contains | Depends on |
 | --- | --- | --- |
-| `@bitsquare/nopy-cube` | `Manifest`, `Cube`, `Hook`, `uniqid`, the zod helpers | zod (peer) |
-| `@bitsquare/nopy` | the CLI, the loader, config, sessions, execution | `@bitsquare/nopy-cube` |
+| `@bitsquare/nopy-cubes` | `Manifest`, `Cube`, `Hook`, `uniqid`, the zod helpers | zod (peer) |
+| `@bitsquare/nopy` | the CLI, the loader, config, sessions, execution | `@bitsquare/nopy-cubes` |
 
-A `manifest.mjs` should import from **`@bitsquare/nopy-cube`**: it is types and a
+A `manifest.mjs` should import from **`@bitsquare/nopy-cubes`**: it is types and a
 factory with no CLI, no prompts and no process spawning, so a cube bundle can
 depend on it without pulling the whole tool into its dependency graph.
 
 ```javascript
-import { Manifest } from '@bitsquare/nopy-cube';  // prefer this
+import { Manifest } from '@bitsquare/nopy-cubes';  // prefer this
 import { cubes } from '@bitsquare/nopy';          // cubes.Manifest — still supported
 ```
 
@@ -57,7 +57,7 @@ compatibility; it also carries a `cubes.load` alias for `loadCubes`.
 
 ---
 
-## Authoring API (`@bitsquare/nopy-cube`)
+## Authoring API (`@bitsquare/nopy-cubes`)
 
 ### `Manifest(opts)`
 
@@ -65,7 +65,7 @@ Factory for a cube manifest. `name` is the only required option; everything else
 is filled in.
 
 ```javascript
-import { Manifest } from '@bitsquare/nopy-cube';
+import { Manifest } from '@bitsquare/nopy-cubes';
 import { z } from 'zod';
 
 export default Manifest({
@@ -85,7 +85,7 @@ Defaults applied by the factory: `id: ''`, `schema: z.object({})`,
 `createManifest` and `manifest` are exported as identical aliases.
 `ManifestFactory` is a third alias, marked `@deprecated` — and it is not
 re-exported through `@bitsquare/nopy`, so it is only reachable from
-`@bitsquare/nopy-cube` directly.
+`@bitsquare/nopy-cubes` directly.
 
 #### `Manifest<Schema>` (interface)
 
@@ -336,7 +336,7 @@ for callers that only want to display what was found.
 
 `loadCubes()` also registers the resolve hook (`cubes/resolve-hook.mjs`) before
 importing anything. The hook tries ordinary Node resolution first and only on
-failure falls back to resolving `@bitsquare/nopy-cube`, `@bitsquare/nopy` and
+failure falls back to resolving `@bitsquare/nopy-cubes`, `@bitsquare/nopy` and
 `zod` from the running CLI's own `node_modules` — so a hand-written cube in a
 directory with no `node_modules` loads, while a cube shipping its own zod keeps
 it. Registration is best-effort: it is a convenience, never load-bearing.
@@ -811,7 +811,7 @@ type ResolutionConfig = { [K in keyof NopyConfig]?: ResolutionStrategy };
 ### `CubePackageRef`
 
 A package named in `cubePackages`, paired with where it was named. In the file an
-entry is just a string (`"@bitsquare/cubes-core"`); `loadConfig()` normalises it.
+entry is just a string (`"@bitsquare/nopy-cubes-core"`); `loadConfig()` normalises it.
 
 ```typescript
 interface CubePackageRef {
@@ -848,7 +848,7 @@ objects deep-merge, primitives are replaced. `override` replaces outright.
 ```json
 {
   "hosts": ["local-host"],
-  "cubePackages": ["@bitsquare/cubes-core"],
+  "cubePackages": ["@bitsquare/nopy-cubes-core"],
   "resolution": { "hosts": "override" }
 }
 ```
@@ -1111,7 +1111,7 @@ working directory. The prefixed forms `<name>.manifest.mjs` and
 
 ```javascript
 // manifest.mjs
-import { Manifest } from '@bitsquare/nopy-cube';
+import { Manifest } from '@bitsquare/nopy-cubes';
 import { z } from 'zod';
 
 export default Manifest({

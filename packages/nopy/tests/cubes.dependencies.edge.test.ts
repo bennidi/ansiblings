@@ -2,7 +2,7 @@
  * Edge cases for BuildContext: unknown cubes, session replay and auth flags.
  */
 
-import { type AnyObjectSchema, Cube, Manifest } from '@bitsquare/nopy-cube';
+import { type AnyObjectSchema, Cube, Manifest } from '@bitsquare/nopy-cubes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { BuildContext } from '../src/cubes/dependencies.js';

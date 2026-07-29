@@ -11,5 +11,5 @@
   },
   "include": ["src/**/*"],
   "exclude": ["coverage", "node_modules", "dist"],
-  "references": [{ "path": "../nopy-cube" }]
+  "references": [{ "path": "../nopy-cubes" }]
 }

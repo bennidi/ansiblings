@@ -54,7 +54,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@bitsquare/nopy-cube": "workspace:*",
+    "@bitsquare/nopy-cubes": "workspace:*",
     "@logtape/logtape": "^2.2.4",
     "commander": "^15.0.0",
     "enquirer": "^2.4.1",

@@ -164,7 +164,7 @@ Uses `.nopyrc.json` files (project-level or home directory) containing:
 {
   "hosts": ["host1.example.com", "host2.example.com"],
   "cubeDirs": ["./cubes", "../shared-cubes"],
-  "cubePackages": ["@bitsquare/cubes-core"],
+  "cubePackages": ["@bitsquare/nopy-cubes-core"],
   "env": {
     "SHARED_VAR": "value"
   },
@@ -314,11 +314,11 @@ A cube package is an ordinary npm package that ships its cubes in a `cubes/` dir
 Install it and name it — nothing needs linking or copying:
 
 ```sh
-pnpm add -D @bitsquare/cubes-core
+pnpm add -D @bitsquare/nopy-cubes-core
 ```
 
 ```json
-{ "cubePackages": ["@bitsquare/cubes-core"] }
+{ "cubePackages": ["@bitsquare/nopy-cubes-core"] }
 ```
 
 Naming a package is a statement that cubes are expected from it, so anything wrong is an error that aborts the run rather than a silent skip: the package is not installed, it has neither a `cubes/` directory nor a `nopy.cubes` override, its `nopy.cubes` is malformed, or an entry points at a directory that does not exist or lies outside the package.
@@ -341,11 +341,11 @@ The cubes live in a separate bundle, installed into whichever project describes
 your infrastructure and named in its `.nopyrc.json`:
 
 ```bash
-pnpm add -D @bitsquare/cubes-core
+pnpm add -D @bitsquare/nopy-cubes-core
 ```
 
 ```json
-{ "hosts": ["your-host"], "cubePackages": ["@bitsquare/cubes-core"] }
+{ "hosts": ["your-host"], "cubePackages": ["@bitsquare/nopy-cubes-core"] }
 ```
 
 #### Channels

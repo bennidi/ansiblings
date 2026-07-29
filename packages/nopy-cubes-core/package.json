@@ -1,0 +1,45 @@
+{
+  "name": "@bitsquare/nopy-cubes-core",
+  "version": "0.5.0",
+  "description": "The core nopy cube bundle: apt, users, ssh, networking, services and runtimes.",
+  "keywords": [
+    "nopy",
+    "nopy-cubess",
+    "pyinfra",
+    "deployment",
+    "infrastructure"
+  ],
+  "license": "MIT",
+  "author": "bitsquare",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitea.bitsquare.dev/BitSquare/ansiblings.git",
+    "directory": "packages/nopy-cubes-core"
+  },
+  "homepage": "https://gitea.bitsquare.dev/BitSquare/ansiblings/src/branch/main/packages/nopy-cubes-core",
+  "bugs": {
+    "url": "https://gitea.bitsquare.dev/BitSquare/ansiblings/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "nopy": {
+    "cubes": [
+      "./cubes"
+    ]
+  },
+  "files": [
+    "cubes",
+    "!cubes/**/*.log",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@bitsquare/nopy-cubes": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

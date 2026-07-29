@@ -3,7 +3,7 @@
  * @module cubes/dependencies
  */
 
-import type { Cube, CubeVariables, HookContext } from '@bitsquare/nopy-cube';
+import type { Cube, CubeVariables, HookContext } from '@bitsquare/nopy-cubes';
 import { getLogger } from '@logtape/logtape';
 import type { Variables } from '../nopy.common.js';
 import type { NopyConfig } from '../nopy.config.js';

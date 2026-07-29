@@ -6,7 +6,7 @@ what changes once a cube lives in `node_modules` instead of in your own tree.
 If you only want to *use* a published bundle, you need one line of config:
 
 ```json
-{ "cubePackages": ["@bitsquare/cubes-core"] }
+{ "cubePackages": ["@bitsquare/nopy-cubes-core"] }
 ```
 
 The rest of this document is for writing one.
@@ -39,7 +39,7 @@ and imports each `manifest.mjs` directly.
         └── deploy.py
 ```
 
-`@bitsquare/cubes-core` in this repository is the worked example, and is consumed
+`@bitsquare/nopy-cubes-core` in this repository is the worked example, and is consumed
 by this repository through exactly the mechanism described here — it is not
 special-cased.
 
@@ -53,7 +53,7 @@ special-cased.
   "files": ["cubes", "!cubes/**/*.log", "README.md", "LICENSE"],
   "publishConfig": { "access": "public" },
   "dependencies": {
-    "@bitsquare/nopy-cube": "^1.0.0",
+    "@bitsquare/nopy-cubes": "^1.0.0",
     "zod": "^4.4.3"
   }
 }
@@ -86,7 +86,7 @@ not behave the way you expect.
 leaves a `pyinfra-debug.log` next to its `deploy.py`, and `.gitignore` has no
 effect on what npm packs. Check with `npm pack --dry-run` before publishing.
 
-**Dependencies** are `@bitsquare/nopy-cube` and `zod`, both real dependencies
+**Dependencies** are `@bitsquare/nopy-cubes` and `zod`, both real dependencies
 rather than peers — a bundle is a leaf, and the copies it gets are the copies its
 manifests use. Do **not** depend on `@bitsquare/nopy`: the CLI is what installs
 your bundle, not the other way round, and depending on it invites two copies of
@@ -101,7 +101,7 @@ directory as its working directory.
 
 ```javascript
 // cubes/nginx/manifest.mjs
-import { Manifest } from '@bitsquare/nopy-cube';
+import { Manifest } from '@bitsquare/nopy-cubes';
 import { z } from 'zod';
 
 export default Manifest({
@@ -127,7 +127,7 @@ SERVER_NAME = host.data.SERVER_NAME
 apt.packages(name='Install nginx', packages=['nginx'], _sudo=True)
 ```
 
-Import **`@bitsquare/nopy-cube`**, not `@bitsquare/nopy`. It is types and a
+Import **`@bitsquare/nopy-cubes`**, not `@bitsquare/nopy`. It is types and a
 factory with zod as its only peer — no CLI, no prompts, no process spawning — so
 your bundle stays a leaf. (`@bitsquare/nopy` re-exports the same surface as
 `cubes.Manifest`, which is what older manifests use. It still works; it just
@@ -214,10 +214,10 @@ the cube scan itself.
 
 **How a manifest finds its imports.** Ordinary Node resolution, from the
 manifest's own directory. An installed bundle has its own `node_modules` with
-`@bitsquare/nopy-cube` and `zod` in it, so this just works. A hand-written cube
+`@bitsquare/nopy-cubes` and `zod` in it, so this just works. A hand-written cube
 sitting in a directory with no `node_modules` would historically fail with
 `ERR_MODULE_NOT_FOUND`; nopy now registers a resolve hook that catches exactly
-that case and falls back to resolving `@bitsquare/nopy-cube`, `@bitsquare/nopy`
+that case and falls back to resolving `@bitsquare/nopy-cubes`, `@bitsquare/nopy`
 and `zod` from the running CLI. Normal resolution is always tried first, so a
 cube that ships its own zod keeps it. Treat the hook as a convenience for local
 cubes — a published bundle must declare its dependencies properly.
@@ -272,6 +272,6 @@ For how this repository releases its own packages, see
 | `'…' does not exist in …` | A `nopy.cubes` entry pointing at a directory the tarball does not contain. |
 | `'…' points outside the package` | A `nopy.cubes` entry escaping the package root. Not allowed. |
 | `Duplicate cube id 'X' from N sources:` | Two or more cubes claiming one id; the message lists each source. Rename one — there is no precedence rule to lean on. |
-| `ERR_MODULE_NOT_FOUND` for `zod` or `@bitsquare/nopy-cube` | The bundle did not declare them as dependencies. The resolve-hook fallback covers loose local cubes, not published packages. |
+| `ERR_MODULE_NOT_FOUND` for `zod` or `@bitsquare/nopy-cubes` | The bundle did not declare them as dependencies. The resolve-hook fallback covers loose local cubes, not published packages. |
 | `Invalid manifest in …: 'secrets' names X, which is not in the schema` | A `secrets` entry with no matching schema key — usually a typo or a renamed field. |
 | Cubes work linked, fail installed | Almost always a write into the cube's own directory, or a file missing from `files`. |
