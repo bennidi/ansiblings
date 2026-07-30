@@ -310,7 +310,15 @@ file naming the README recommends is invisible to the function documented at
 `docs/API.md:430`. `loadSession` is unaffected (it switches on `.json`/`.mjs`),
 so this only bites the listing API.
 
-### 2.6 🟠 `docs/DOCKER.md` container name contradicts the file it points at
+### 2.6 ✅ `docs/DOCKER.md` container name contradicts the file it points at — **fixed**
+
+> **Resolved.** `example.nopysession.json` now targets
+> `@docker/nopy-test-container`, matching the guide, `packages/nopy/.nopyrc.json`
+> and the session example in the nopy README. `nopy-test-ubuntu` was the outlier.
+> Worth knowing why it silently "worked": an identifier with no matching
+> container is read as an *image*, so the run built and committed a throwaway
+> image instead of failing — the mode `docs/DOCKER.md` now documents at the end.
+> The finding below is kept as the record of what was wrong.
 
 `docs/DOCKER.md:35` and `:45`:
 
@@ -372,7 +380,18 @@ this is what a reader sees on npmjs.com — build-from-monorepo instructions
 instead of `npm install -g @bitsquare/nopy`, which is what the root README and
 `README.PUBLISH.md:314` correctly tell people to run.
 
-### 2.10 🟠 keyman README: two operations missing, one operation invented
+### 2.10 ✅ keyman README: two operations missing, one operation invented — **fixed**
+
+> **Resolved.** The README was rewritten against the code (`packages/keyman/docs/PLAN.md`
+> Phase 9). All nine menu entries are documented, and a test asserts it contains
+> every label `keyman.main.ts` offers, so a tenth cannot arrive undocumented.
+> Encrypt is described as the union of `~/.ssh` and the tmp directory, which is
+> what it does. The Quick Start now points at the Generate operation instead of
+> `ssh-keygen`. Rotation stopped being an invention in Phase 10: it exists, in two
+> halves (`keyman.rotate.ts`), and the README documents the sequence. The whole CLI
+> surface is there too — `helpText()` quoted verbatim, with a test that fails if the
+> two diverge — which was the other half of this, tracked as
+> `packages/keyman/docs/AUDIT.md` §5.3. The finding below is kept as the record.
 
 `packages/keyman/README.md:90-96` lists four menu entries: List, Encrypt,
 Decrypt, Quit. The menu (`keyman.main.ts:54-61`) has six:
@@ -403,7 +422,9 @@ Root `README.md:57-58` describes "a hard **85 % branch** floor". Both
 the root README is the odd one out, and it is the file a new contributor reads
 first.
 
-### 2.12 🟡 `docs/DOCKER.md` relative link is broken
+### 2.12 ✅ `docs/DOCKER.md` relative link is broken — **fixed**
+
+> **Resolved.** The link is now `../README.md`.
 
 `docs/DOCKER.md:8` links `[README.md](./README.md)`, which resolves to
 `packages/nopy/docs/README.md` — nonexistent. It should be `../README.md`.
@@ -752,8 +773,10 @@ the three has to give.
   with §4.2 this is a second path by which secrets reach stdout.~~ **Removed**
   alongside the `--use-defaults` work; it would have made an unattended run
   unreadable. The two other paths in §4.2 are untouched.
-- `keyman.encrypt.ts:19-20` — `console.log(tmpKeys); console.log(sshKeys);`
-  before the prompt.
+- ~~`keyman.encrypt.ts:19-20` — `console.log(tmpKeys); console.log(sshKeys);`
+  before the prompt.~~ **Removed** in Phase 2 of the keyman remediation, along
+  with a third one nobody had noticed: a `console.log` *inside* a `filter`
+  callback in `keyman.decrypt.ts`, printing a line per vault directory.
 
 ### 6.5 🟡 No cycle detection
 
@@ -813,8 +836,13 @@ Recording what was verified and found correct, so a future pass need not redo it
   scan, dotted/`node_modules` skipping, the prefixed `*.manifest.mjs` fallback,
   and the three-step id resolution match `cubes/loader.ts` exactly.
 - **pyinfra `--data` type coercion** (`README.md:101`) — correct.
-- **keyman config** — priority (`VAULT_ROOT` > file > defaults), the four default
-  values, and the vault layout match `keyman.config.ts` and `keyman.encrypt.ts`.
+- **keyman config** — priority (`VAULT_ROOT` > file > defaults) and the four
+  default values match `keyman.config.ts`. The third clause of this entry used to
+  read "and the vault layout match[es] … `keyman.encrypt.ts`", which was true only
+  because `encrypt.ts` hardcoded `keys` and ignored the config — checking a
+  documented layout against the file that ignores the configuration is what kept
+  that defect invisible here. Both are honest now: the layout is configurable and
+  `encrypt` reads the configuration (`packages/keyman/docs/AUDIT.md` §1.1, §5.1).
 
 ---
 

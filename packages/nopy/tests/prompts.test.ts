@@ -199,9 +199,30 @@ describe('HostSelection', () => {
   });
 
   it('prefixes a docker container', async () => {
-    inquirerPrompt.mockResolvedValue({ host: 'runtime:docker', dockerContainer: 'box' });
+    inquirerPrompt.mockResolvedValue({ host: 'docker', dockerTarget: 'box' });
 
     await expect(HostSelection([])).resolves.toBe('@docker/box');
+  });
+
+  it('prefixes a docker image reference the same way', async () => {
+    inquirerPrompt.mockResolvedValue({ host: 'docker', dockerTarget: 'ubuntu:24.04' });
+
+    await expect(HostSelection([])).resolves.toBe('@docker/ubuntu:24.04');
+  });
+
+  it('trims the docker identifier', async () => {
+    inquirerPrompt.mockResolvedValue({ host: 'docker', dockerTarget: '  ubuntu:24.04 ' });
+
+    await expect(HostSelection([])).resolves.toBe('@docker/ubuntu:24.04');
+  });
+
+  it('rejects an empty docker identifier', async () => {
+    inquirerPrompt.mockResolvedValue({ host: 'web-1' });
+
+    await HostSelection([]);
+
+    expect(question('dockerTarget')?.validate('  ')).toBe('Required');
+    expect(question('dockerTarget')?.validate('ubuntu:24.04')).toBe(true);
   });
 
   it('gates the follow-up questions on the chosen host', async () => {
@@ -213,8 +234,12 @@ describe('HostSelection', () => {
     expect(question('customHost')?.when({ host: 'web-1' })).toBe(false);
     expect(question('vagrantVM')?.when({ host: 'vagrant' })).toBe(true);
     expect(question('vagrantVM')?.when({ host: 'web-1' })).toBe(false);
-    expect(question('dockerContainer')?.when({ host: 'runtime:docker' })).toBe(true);
-    expect(question('dockerContainer')?.when({ host: 'web-1' })).toBe(false);
+    // The regression: the gate compared against the `runtime:docker` *cube id*,
+    // so picking `docker` from the list skipped this question entirely and the
+    // host came back as the literal string `docker`.
+    expect(question('dockerTarget')?.when({ host: 'docker' })).toBe(true);
+    expect(question('dockerTarget')?.when({ host: 'runtime:docker' })).toBe(false);
+    expect(question('dockerTarget')?.when({ host: 'web-1' })).toBe(false);
   });
 });
 

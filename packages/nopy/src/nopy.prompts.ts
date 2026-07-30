@@ -117,6 +117,17 @@ export async function PasswordSelection(username: string): Promise<string> {
   return password;
 }
 
+/**
+ * Prompts for the deployment target, normalising the built-ins into the host
+ * strings pyinfra's connectors expect.
+ *
+ * The docker branch takes either identifier the connector accepts, and they
+ * mean very different things: a **container** name or id is mutated in place
+ * and left running, while an **image** reference makes pyinfra start a
+ * throwaway container, apply the deploy, commit the result as a new image and
+ * print its id. Only the connector can tell the two apart — it looks for a
+ * matching container first — so the prompt does not try to.
+ */
 export async function HostSelection(hosts: string[]): Promise<string> {
   const selectedHost = await inquirer.prompt([
     {
@@ -140,13 +151,14 @@ export async function HostSelection(hosts: string[]): Promise<string> {
     },
     {
       type: 'input',
-      name: 'dockerContainer',
-      message: 'Specify docker container name:',
-      when: (answers) => answers.host === 'runtime:docker',
+      name: 'dockerTarget',
+      message: 'Specify docker container name/id, or an image to build from:',
+      when: (answers) => answers.host === 'docker',
+      validate: (value: string) => value.trim().length > 0 || 'Required',
     },
   ]);
   if (selectedHost.host === 'vagrant') return `@vagrant/${selectedHost.vagrantVM}`;
-  if (selectedHost.host === 'runtime:docker') return `@docker/${selectedHost.dockerContainer}`;
+  if (selectedHost.host === 'docker') return `@docker/${selectedHost.dockerTarget.trim()}`;
   return selectedHost.customHost ?? selectedHost.host;
 }
 

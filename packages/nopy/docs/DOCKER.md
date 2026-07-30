@@ -5,7 +5,7 @@ This guide explains how to set up a local Docker container to test `nopy` deploy
 ## Prerequisites
 
 - Docker installed and running on your machine.
-- `nopy` installed and linked (see [README.md](./README.md)).
+- `nopy` installed and linked (see [README.md](../README.md)).
 
 ## 1. Setup SSH Key (Important)
 
@@ -80,3 +80,48 @@ To stop and remove the container:
 ```bash
 docker rm -f nopy-test-container
 ```
+
+## Building an image instead of targeting a container
+
+The `@docker` connector reads its identifier two ways, and the difference is
+the whole feature:
+
+| Host                  | What pyinfra does                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `@docker/<container>` | runs against that container and leaves it running — the flow above                     |
+| `@docker/<image>`     | starts a throwaway container, deploys into it, `docker commit`s it, prints the new image ID, removes the container |
+
+It looks for a matching container first, so nothing distinguishes the two at the
+prompt: pick `docker` at host selection and enter either an existing container
+or an image reference such as `ubuntu:24.04`.
+
+```
+$ nopy install
+? Select host from inventory  docker
+? Specify docker container name/id, or an image to build from:  ubuntu:24.04
+...
+--> docker build complete, image ID: 39b782da6859
+$ docker tag 39b782da6859 myapp:1.0
+```
+
+Two things the connector cannot do, both worth knowing before treating this as a
+Dockerfile replacement. The commit is untagged, so the image exists only as an
+ID until you tag it; and it carries the base image's metadata unchanged —
+`CMD`, `ENTRYPOINT`, `ENV`, `EXPOSE` have no equivalent in a cube. When either
+matters, own the container yourself and commit deliberately:
+
+```bash
+cid=$(docker run -d ubuntu:24.04 sleep infinity)
+nopy install            # host: docker → paste $cid at the prompt
+docker commit --change 'CMD ["/usr/sbin/sshd","-D"]' "$cid" myapp:1.0
+docker rm -f "$cid"
+```
+
+There is no `--host` flag; for an unattended build put the identifier in a
+session file's `hosts` array (as `example.nopysession.json` does) and replay it
+with `nopy install -l <file>`.
+
+Note also that an image target starts from a fresh container every run, so every
+cube reports changes every time — idempotence only shows up when you re-run
+against a container id. And there is no init system in a plain container, so
+service-level cubes still need the `--privileged` systemd setup above.

@@ -8,7 +8,7 @@
       }
     }
   ],
-  "hosts": ["@docker/nopy-test-ubuntu"],
+  "hosts": ["@docker/nopy-test-container"],
   "env": {
     "KEY_DIR": "../../vault/tmp"
   },
