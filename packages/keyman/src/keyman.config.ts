@@ -15,27 +15,11 @@ const KeymanConfigSchema = z.object({
 
 export type KeymanConfig = z.infer<typeof KeymanConfigSchema>;
 
-/**
- * Resolution strategy for merging config properties
- * - 'merge': Arrays are concatenated, objects are deep merged (default)
- * - 'override': Child value completely replaces parent value
- */
-export type ResolutionStrategy = 'merge' | 'override';
+/** Raw config file structure */
+export type KeymanConfigFile = Partial<KeymanConfig>;
 
-/**
- * Resolution configuration for customizing merge behavior
- */
-export type KeymanResolutionConfig = {
-  [K in keyof KeymanConfig]?: ResolutionStrategy;
-};
-
-/**
- * Raw config file structure (includes resolution)
- */
-export interface KeymanConfigFile extends Partial<KeymanConfig> {
-  /** Customize merge behavior for specific properties */
-  resolution?: KeymanResolutionConfig;
-}
+/** Every key a config file may set. */
+const KNOWN_KEYS = Object.keys(KeymanConfigSchema.shape) as (keyof KeymanConfig)[];
 
 /**
  * Default configuration values
@@ -110,71 +94,36 @@ function findConfigFiles(startDir: string): string[] {
 }
 
 /**
- * Deep merges two values based on resolution strategy
+ * Reports keys a config file sets that keyman does not read.
+ *
+ * `z.object` strips them silently, so `{"vaultroot": "…"}` used to be
+ * indistinguishable from an empty file — the vault quietly stayed at the default
+ * and nothing said why. Warned rather than fatal, which is this module's posture
+ * throughout, and warned *here* because this is the only place the filename is in
+ * hand: `z.strictObject` on the merged result cannot name the file that said it.
  */
-function mergeValue(
-  parentValue: unknown,
-  childValue: unknown,
-  strategy: ResolutionStrategy
-): unknown {
-  // Override strategy: child replaces parent completely
-  if (strategy === 'override') {
-    return childValue;
-  }
+function warnUnknownKeys(configFile: KeymanConfigFile, configPath: string): void {
+  const unknown = Object.keys(configFile).filter(
+    (key) => !KNOWN_KEYS.includes(key as keyof KeymanConfig)
+  );
 
-  // Merge strategy (default)
-  if (Array.isArray(parentValue) && Array.isArray(childValue)) {
-    // Concatenate arrays, remove duplicates for primitives
-    const combined = [...parentValue, ...childValue];
-    if (combined.every((v) => typeof v !== 'object')) {
-      return [...new Set(combined)];
-    }
-    return combined;
+  if (unknown.length > 0) {
+    console.warn(
+      `⚠️  ${configPath}: ignoring unknown ${unknown.length === 1 ? 'key' : 'keys'} ${unknown.join(', ')}. Known keys: ${KNOWN_KEYS.join(', ')}.`
+    );
   }
-
-  if (
-    typeof parentValue === 'object' &&
-    parentValue !== null &&
-    typeof childValue === 'object' &&
-    childValue !== null &&
-    !Array.isArray(parentValue) &&
-    !Array.isArray(childValue)
-  ) {
-    // Deep merge objects
-    const result: Record<string, unknown> = { ...parentValue };
-    for (const [key, value] of Object.entries(childValue)) {
-      if (key in result) {
-        result[key] = mergeValue(result[key], value, 'merge');
-      } else {
-        result[key] = value;
-      }
-    }
-    return result;
-  }
-
-  // Primitives: child overrides parent
-  return childValue;
 }
 
 /**
- * Merges a child config into a parent config
+ * Merges a child config into a parent config.
+ *
+ * Every property is a string, so a child simply wins. keyman deliberately has
+ * none of nopy's `resolution` machinery: deep-merge and array-concatenation
+ * strategies are meaningful there because its config holds arrays and objects,
+ * and here they would be 45 lines that cannot change an outcome.
  */
 function mergeConfigs(parent: KeymanConfig, childFile: KeymanConfigFile): KeymanConfig {
-  const resolution = childFile.resolution || {};
-  const result: Record<string, unknown> = { ...parent };
-
-  for (const [key, value] of Object.entries(childFile)) {
-    if (key === 'resolution') continue; // Skip resolution property itself
-
-    const strategy = resolution[key as keyof KeymanConfig] || 'merge';
-    if (key in result) {
-      result[key] = mergeValue(result[key], value, strategy);
-    } else {
-      result[key] = value;
-    }
-  }
-
-  return result as unknown as KeymanConfig;
+  return { ...parent, ...childFile };
 }
 
 /**
@@ -182,16 +131,6 @@ function mergeConfigs(parent: KeymanConfig, childFile: KeymanConfigFile): Keyman
  *
  * Searches for `.keymanrc.json` by traversing upwards from cwd to root.
  * Multiple config files are merged, with child configs overriding parent configs.
- *
- * Use the `resolution` property to customize merge behavior:
- * ```json
- * {
- *   "vaultRoot": "../vault",
- *   "resolution": {
- *     "vaultRoot": "override"
- *   }
- * }
- * ```
  *
  * @returns Validated keyman configuration
  */
@@ -211,6 +150,7 @@ export function loadConfig(): KeymanConfig {
     try {
       const content = fs.readFileSync(configPath, 'utf-8');
       const rawConfig = JSON.parse(content) as KeymanConfigFile;
+      warnUnknownKeys(rawConfig, configPath);
       // Resolve path properties relative to the config file's directory
       const configDir = path.dirname(configPath);
       const resolvedConfig = resolvePathsRelativeToConfig(rawConfig, configDir);
@@ -264,4 +204,18 @@ export function resolveConfigPaths(config: KeymanConfig) {
  */
 export function getConfigPaths(): string[] {
   return findConfigFiles(process.cwd());
+}
+
+/**
+ * What `--print-config` prints.
+ *
+ * `configFiles` is the question the flag could not answer before: which files
+ * were read, in the order they were merged. It existed only as unstructured
+ * stderr from `loadConfig`, which is exactly the wrong place for it — the JSON is
+ * the machine-readable half.
+ */
+export function describeConfig(): ReturnType<typeof resolveConfigPaths> & {
+  configFiles: string[];
+} {
+  return { ...resolveConfigPaths(loadConfig()), configFiles: getConfigPaths() };
 }

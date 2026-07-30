@@ -179,7 +179,8 @@ Usage
 Flags
   -h, --help                         print this help and exit
   -V, --version                      print the version and exit
-      --print-config                 print the resolved vault paths as JSON and exit
+      --print-config                 print the resolved paths and the config files
+                                     they came from, as JSON, and exit
       --self-update                  same as the self-update subcommand
 
 Flags for self-update

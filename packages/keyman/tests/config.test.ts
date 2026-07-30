@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  describeConfig,
   getConfigPaths,
   type KeymanConfigFile,
   loadConfig,
@@ -208,49 +209,82 @@ describe('keyman config', () => {
     });
   });
 
-  describe('merge strategy', () => {
-    it('honours an explicit override strategy', () => {
-      write(rootDir, { vaultRoot: '/parent-vault' });
-      const child = path.join(rootDir, 'nested');
-      write(child, { vaultRoot: '/child-vault', resolution: { vaultRoot: 'override' } });
-      process.chdir(child);
+  describe('unknown keys', () => {
+    /** What a config file is likely to get wrong: the casing of a real key. */
+    const TYPO = { vaultroot: '/somewhere-else' } as unknown as KeymanConfigFile;
 
-      expect(loadConfig().vaultRoot).toBe('/child-vault');
+    it('names the file, the key and what it could have been', () => {
+      write(rootDir, TYPO);
+
+      loadConfig();
+
+      const warned = messages(warnSpy);
+      expect(warned).toContain(path.join(rootDir, '.keymanrc.json'));
+      expect(warned).toContain('vaultroot');
+      // Without the list of known keys the warning says a key is wrong without
+      // saying what right looks like, which for a casing slip is most of the work.
+      expect(warned).toContain('vaultRoot');
     });
 
-    it('never surfaces the resolution key in the loaded config', () => {
-      write(rootDir, { keysDir: 'my-keys', resolution: { keysDir: 'override' } });
-
-      expect(loadConfig()).not.toHaveProperty('resolution');
-    });
-
-    it('tolerates and drops array-valued keys the schema does not define', () => {
-      write(rootDir, { extra: ['a', 'b'] } as unknown as KeymanConfigFile);
-      const child = path.join(rootDir, 'nested');
-      write(child, { extra: ['b', 'c'], keysDir: 'my-keys' } as unknown as KeymanConfigFile);
-      process.chdir(child);
+    it('still applies the keys it does understand', () => {
+      write(rootDir, { ...TYPO, keysDir: 'my-keys' });
 
       const config = loadConfig();
 
-      expect(config).toEqual({ ...DEFAULTS, keysDir: 'my-keys' });
+      expect(config.keysDir).toBe('my-keys');
+      expect(config.vaultRoot).toBe(DEFAULTS.vaultRoot);
     });
 
-    it('tolerates and drops object-valued keys the schema does not define', () => {
-      write(rootDir, { extra: { a: 1 } } as unknown as KeymanConfigFile);
+    it('blames the file that said it, not the merged result', () => {
+      write(rootDir, {});
       const child = path.join(rootDir, 'nested');
-      write(child, { extra: { a: 2, b: 3 } } as unknown as KeymanConfigFile);
+      write(child, TYPO);
       process.chdir(child);
 
-      expect(loadConfig()).toEqual(DEFAULTS);
+      loadConfig();
+
+      expect(messages(warnSpy)).toContain(path.join(child, '.keymanrc.json'));
+      expect(messages(warnSpy)).not.toContain(path.join(rootDir, '.keymanrc.json'));
     });
 
-    it('tolerates arrays of objects, which cannot be de-duplicated', () => {
-      write(rootDir, { extra: [{ a: 1 }] } as unknown as KeymanConfigFile);
+    it('lists every unknown key in one warning per file', () => {
+      write(rootDir, { nope: 1, alsoNope: 2 } as unknown as KeymanConfigFile);
+
+      loadConfig();
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(messages(warnSpy)).toContain('nope, alsoNope');
+      expect(messages(warnSpy)).toContain('unknown keys');
+    });
+
+    it('says key, singular, for one of them', () => {
+      write(rootDir, TYPO);
+
+      loadConfig();
+
+      expect(messages(warnSpy)).toContain('unknown key ');
+    });
+
+    it('says nothing about a file that sets only known keys', () => {
+      write(rootDir, { keysDir: 'my-keys', tmpDir: 'my-tmp' });
+
+      loadConfig();
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['array-valued', { extra: ['a', 'b'] }],
+      ['object-valued', { extra: { a: 1 } }],
+      ['an array of objects', { extra: [{ a: 1 }] }],
+    ])('drops a %s unknown key rather than merging it in', (_label, extra) => {
+      write(rootDir, extra as unknown as KeymanConfigFile);
       const child = path.join(rootDir, 'nested');
-      write(child, { extra: [{ a: 2 }] } as unknown as KeymanConfigFile);
+      write(child, { ...extra, keysDir: 'my-keys' } as unknown as KeymanConfigFile);
       process.chdir(child);
 
-      expect(loadConfig()).toEqual(DEFAULTS);
+      // The schema strips them; nothing in keyman merges an array or an object.
+      expect(loadConfig()).toEqual({ ...DEFAULTS, keysDir: 'my-keys' });
     });
   });
 
@@ -289,6 +323,29 @@ describe('keyman config', () => {
       });
 
       expect(paths.keysDir).toBe('/elsewhere/keys');
+    });
+  });
+
+  describe('describeConfig', () => {
+    it('reports the resolved paths and the files they came from', () => {
+      write(rootDir, { keysDir: 'my-keys', vaultRoot: 'vault' });
+      const child = path.join(rootDir, 'nested');
+      write(child, { tmpDir: 'my-tmp' });
+      process.chdir(child);
+
+      expect(describeConfig()).toEqual({
+        vaultRoot: path.join(rootDir, 'vault'),
+        keysDir: path.join(rootDir, 'vault', 'my-keys'),
+        tmpDir: path.join(rootDir, 'vault', 'my-tmp'),
+        keyPath: path.join(rootDir, 'vault', 'age.key'),
+        // Parent first, the order they were merged in — which is the only way to
+        // read a surprising value back to the file responsible for it.
+        configFiles: [path.join(rootDir, '.keymanrc.json'), path.join(child, '.keymanrc.json')],
+      });
+    });
+
+    it('reports an empty list when nothing was found', () => {
+      expect(describeConfig().configFiles).toEqual([]);
     });
   });
 });

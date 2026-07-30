@@ -2,7 +2,7 @@
 
 import { createRequire } from 'node:module';
 import { helpText, type ParsedArgs, parseArgs, UsageError } from './keyman.args.js';
-import { loadConfig, resolveConfigPaths } from './keyman.config.js';
+import { describeConfig } from './keyman.config.js';
 import { keyman } from './keyman.main.js';
 import { formatCommand, selfUpdate, updateNotice } from './keyman.update.js';
 
@@ -34,9 +34,7 @@ if (parsed.command === 'help') {
 }
 
 if (parsed.command === 'print-config') {
-  const config = loadConfig();
-  const paths = resolveConfigPaths(config);
-  console.log(JSON.stringify(paths));
+  console.log(JSON.stringify(describeConfig()));
   process.exit(0);
 }
 
