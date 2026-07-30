@@ -73,14 +73,14 @@ describe('scanPrivateKeys', () => {
     expect(scanPrivateKeys(dir)).toEqual({ keys: [], skipped: [] });
   });
 
-  it('ignores a file it cannot read', () => {
-    write('secret', OPENSSH);
-    fs.chmodSync(path.join(dir, 'secret'), 0o000);
+  it('ignores a path it cannot read', () => {
+    // A dangling symlink, not a 0o000 file: root reads a 0o000 file happily, so
+    // the mode-based version of this passed here and failed on the CI runner,
+    // which is a container running as root. ENOENT nobody can override.
+    fs.symlinkSync(path.join(dir, 'gone'), path.join(dir, 'secret'));
 
     // Reported as not-a-key rather than crashing the menu it was building.
     expect(scanPrivateKeys(dir).skipped).toEqual([]);
-
-    fs.chmodSync(path.join(dir, 'secret'), 0o600);
   });
 
   it('does not read past the header', () => {
