@@ -2,14 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execa } from 'execa';
 import inquirer from 'inquirer';
+import { runTool } from './keyman.utils.js';
 
 export async function decryptKeys(sshDir: string, vaultDir: string, ageKey: string) {
   const keyDir = path.join(vaultDir, 'keys');
-  const vaultKeys = fs.readdirSync(keyDir).filter((key) => {
-    const keyfile = path.join(keyDir, key, `id_${key}.age`);
-    console.log(keyfile);
-    return fs.existsSync(keyfile);
-  });
+  // Guarded: nothing creates the keys directory until the first encrypt, so on a
+  // fresh vault this readdir threw instead of reporting an empty vault.
+  const vaultKeys = fs.existsSync(keyDir)
+    ? fs.readdirSync(keyDir).filter((key) => fs.existsSync(path.join(keyDir, key, `id_${key}.age`)))
+    : [];
 
   if (vaultKeys.length === 0) {
     console.log('⚠️ No encrypted keys found.');
@@ -44,7 +45,7 @@ export async function decryptKeys(sshDir: string, vaultDir: string, ageKey: stri
         : path.join(sshDir, `id_${key}.pub`);
 
     // Decrypt key
-    await execa('age', ['-d', '-i', ageKey, '-o', privateKeyOut, encryptedKey]);
+    await runTool('age', ['-d', '-i', ageKey, '-o', privateKeyOut, encryptedKey]);
 
     await execa('cp', [publicKey, publicKeyOut]);
     await execa('chmod', ['600', privateKeyOut]);

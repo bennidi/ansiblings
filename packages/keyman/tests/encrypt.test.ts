@@ -66,6 +66,33 @@ describe('encryptKeys', () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it('warns instead of throwing when the .ssh directory does not exist', async () => {
+    fs.rmSync(sshDir, { recursive: true });
+
+    await expect(encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY)).resolves.toBeUndefined();
+    expect(messages(logSpy)).toContain('No private SSH keys found to encrypt.');
+  });
+
+  it('still offers the .ssh keys when the tmp directory does not exist', async () => {
+    fs.rmSync(tmpDir, { recursive: true });
+    key(sshDir, 'id_prod', 'ssh');
+    prompt.mockResolvedValue({ selectedKeys: [] });
+
+    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+
+    expect(choices()).toEqual(['id_prod']);
+  });
+
+  it('reports a missing age binary rather than an ENOENT', async () => {
+    key(sshDir, 'id_prod', 'ssh');
+    prompt.mockResolvedValue({ selectedKeys: ['id_prod'] });
+    execa.mockRejectedValue(Object.assign(new Error('spawn age ENOENT'), { code: 'ENOENT' }));
+
+    await expect(encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY)).rejects.toThrow(
+      '`age` was not found on PATH'
+    );
+  });
+
   it('ignores public keys and unrelated files when building the list', async () => {
     fs.writeFileSync(path.join(sshDir, 'known_hosts'), '');
     fs.writeFileSync(path.join(sshDir, 'id_orphan.pub'), 'PUBLIC');

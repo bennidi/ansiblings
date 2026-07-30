@@ -182,6 +182,25 @@ describe('listKeys', () => {
     expect(row('id_real')).toBeDefined();
   });
 
+  it('keeps listing when the vault holds a dangling symlink', async () => {
+    vaultKey('real');
+    fs.symlinkSync(path.join(root, 'gone'), path.join(vaultDir, 'broken'));
+
+    await expect(listKeys(sshDir, vaultDir, tmpDir)).resolves.toBeUndefined();
+    expect(row('id_real')).toBeDefined();
+  });
+
+  it('follows a symlink pointing at a real vault directory', async () => {
+    const elsewhere = path.join(root, 'elsewhere', 'prod');
+    touch(elsewhere, 'id_prod.age');
+    fs.mkdirSync(vaultDir, { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(vaultDir, 'prod'));
+
+    await listKeys(sshDir, vaultDir, tmpDir);
+
+    expect(row('id_prod')).toBeDefined();
+  });
+
   it('ignores loose files sitting next to the vault directories', async () => {
     vaultKey('real');
     fs.writeFileSync(path.join(vaultDir, 'README.md'), '');

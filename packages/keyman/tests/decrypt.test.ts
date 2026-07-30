@@ -69,6 +69,23 @@ describe('decryptKeys', () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it('warns instead of throwing when the vault has no keys directory', async () => {
+    fs.rmSync(keyDir, { recursive: true });
+
+    await expect(decryptKeys(sshDir, vaultDir, AGE_KEY)).resolves.toBeUndefined();
+    expect(messages(logSpy)).toContain('No encrypted keys found.');
+  });
+
+  it('reports a missing age binary rather than an ENOENT', async () => {
+    vaultKey('prod');
+    prompt.mockResolvedValue({ selectedKeys: ['prod'], decryptMode: LOCAL });
+    execa.mockRejectedValue(Object.assign(new Error('spawn age ENOENT'), { code: 'ENOENT' }));
+
+    await expect(decryptKeys(sshDir, vaultDir, AGE_KEY)).rejects.toThrow(
+      '`age` was not found on PATH'
+    );
+  });
+
   it('offers only directories that actually contain an encrypted key', async () => {
     vaultKey('prod');
     fs.mkdirSync(path.join(keyDir, 'empty'), { recursive: true });

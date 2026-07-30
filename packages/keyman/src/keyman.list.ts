@@ -76,9 +76,12 @@ export async function listKeys(sshDir: string, vaultDir: string, tmpDir: string)
 
   // Scan vault directory
   if (fs.existsSync(vaultDir)) {
+    // throwIfNoEntry keeps a dangling symlink from aborting the whole listing;
+    // the stat still follows a symlink to a real directory, which withFileTypes
+    // would have reported as a link and skipped.
     const vaultDirs = fs.readdirSync(vaultDir).filter((dir) => {
-      const stat = fs.statSync(path.join(vaultDir, dir));
-      return stat.isDirectory();
+      const stat = fs.statSync(path.join(vaultDir, dir), { throwIfNoEntry: false });
+      return stat?.isDirectory() ?? false;
     });
 
     for (const dir of vaultDirs) {

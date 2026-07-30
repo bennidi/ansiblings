@@ -106,6 +106,17 @@ describe('keyman', () => {
     expect(output()).toContain(paths.keyPath);
     expect(fs.existsSync(paths.vaultRoot)).toBe(true);
     expect(fs.existsSync(paths.tmpDir)).toBe(true);
+    // keysDir too: decrypt reads it, and nothing created it before the first
+    // encrypt, so a fresh vault could not be decrypted from.
+    expect(fs.existsSync(paths.keysDir)).toBe(true);
+  });
+
+  it('creates the vault directories private to the owner', async () => {
+    await keyman();
+
+    for (const dir of [paths.vaultRoot, paths.keysDir, paths.tmpDir]) {
+      expect(fs.statSync(dir).mode & 0o777, dir).toBe(0o700);
+    }
   });
 
   it('quits without running any operation', async () => {

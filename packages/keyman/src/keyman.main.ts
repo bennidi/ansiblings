@@ -37,8 +37,12 @@ export async function keyman() {
   }
 
   const sshDir = path.join(homeDir, '.ssh');
-  fs.mkdirSync(paths.vaultRoot, { recursive: true });
-  fs.mkdirSync(paths.tmpDir, { recursive: true });
+  // 0700 because the vault holds the age identity and, in tmp, plaintext private
+  // keys. keysDir is created here too: decrypt used to read it before anything
+  // created it.
+  for (const dir of [paths.vaultRoot, paths.keysDir, paths.tmpDir]) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
 
   // Main loop - keep showing menu until user quits
   let running = true;

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { extractAgePublicKey } from '../src/keyman.utils.js';
+import { extractAgePublicKey, runTool } from '../src/keyman.utils.js';
 
 describe('extractAgePublicKey', () => {
   let tmpDir: string;
@@ -75,5 +75,44 @@ describe('extractAgePublicKey', () => {
 
     expect(extractAgePublicKey(asDirectory)).toBeNull();
     expect(errorSpy.mock.calls[0][0]).toContain('Failed to read key file');
+  });
+});
+
+/**
+ * These spawn real processes rather than mocking execa. The whole point of
+ * runTool is the shape of an execa failure, and a mock would only assert what
+ * this test already assumes.
+ */
+describe('runTool', () => {
+  it('returns the result on success', async () => {
+    const result = await runTool('node', ['-e', 'process.stdout.write("hi")']);
+
+    expect(result.stdout).toBe('hi');
+  });
+
+  it('passes options through', async () => {
+    const result = await runTool('node', ['-e', 'process.stdout.write(process.env.PROBE ?? "")'], {
+      env: { PROBE: 'from-options' },
+    });
+
+    expect(result.stdout).toBe('from-options');
+  });
+
+  it('reports a missing binary as an instruction rather than an ENOENT', async () => {
+    await expect(runTool('keyman-no-such-binary', [])).rejects.toThrow(
+      '`keyman-no-such-binary` was not found on PATH. Install it and try again.'
+    );
+  });
+
+  it('surfaces what the binary wrote to stderr', async () => {
+    await expect(
+      runTool('node', ['-e', 'process.stderr.write("no recipient\\n"); process.exit(1)'])
+    ).rejects.toThrow('`node` failed: no recipient');
+  });
+
+  it('falls back to the command summary when stderr is empty', async () => {
+    await expect(runTool('node', ['-e', 'process.exit(3)'])).rejects.toThrow(
+      /`node` failed: .*exit code 3/
+    );
   });
 });
