@@ -214,13 +214,36 @@ out and watching them stay green.
 
 ## keyman architecture
 
-Much smaller: `keyman.cli.ts` (argv, plus a `--print-config` escape hatch) →
-`keyman.main.ts`, an inquirer menu loop dispatching to one module per operation
-(`list`/`copy`/`generate`/`encrypt`/`decrypt`). `keyman.config.ts` mirrors nopy's
-upward-traversal + `resolution` merge for `.keymanrc.json`, but validates the
-result with Zod and falls back to defaults instead of throwing. `VAULT_ROOT` in
-the environment beats the config file. Encryption shells out to `age` /
-`age-keygen` / `ssh-keygen`, which must be on `PATH`.
+Much smaller: `keyman.cli.ts` (wiring only — argv parsing lives in
+`keyman.args.ts`, which is covered, and the CLI is the error boundary that turns a
+`UsageError` into one line instead of a stack trace) → `keyman.main.ts`, an
+inquirer menu loop dispatching to one module per operation
+(`list`/`copy`/`generate`/`encrypt`/`decrypt`/`rotate`/`retire`/`clear`).
+`keyman.config.ts` mirrors nopy's upward traversal for `.keymanrc.json` but not
+its `resolution` merge: every keyman property is a string, so a child simply wins
+and the strategies could not change an outcome — see `docs/AUDIT.md` §3.3. It
+validates with Zod, falls back to defaults instead of throwing, and warns about a
+key it does not know rather than letting Zod strip it silently. `VAULT_ROOT` in
+the environment beats the config file. It shells out to `age`, `age-keygen`
+(`-y`, to derive the recipient from the identity rather than trusting the
+`# public key:` comment) and `ssh-keygen` (`-y`, to recover a missing `.pub`),
+which must be on `PATH`; `runTool` tells a missing binary apart from a refusing
+one. Nothing shells out to `cp` or `chmod` any more — `decrypt` copies and
+chmods in-process, because the old spawn left a private key at age's 0644 for the
+length of two processes.
+
+The write path is one function, `storeInVault` (`keyman.vault.ts`), shared by
+`encrypt`, `generate` and `rotate`; `listVaultKeys` is the one reader of the
+`<keysDir>/<name>/id_<name>.age` layout. Rotation is deliberately two operations
+(`rotate` adds a replacement under the next name in the series, `retire` deletes
+the superseded key), because a rotation that replaces the key in place locks you
+out of the host it was for. keyman never handles a passphrase: `ssh-keygen`
+prompts for it with stdio inherited, since `-N <value>` put it in argv where `ps`
+could read it.
+
+`docs/AUDIT.md` is a full audit of the package with each finding marked closed as
+it landed, and `docs/PLAN.md` the ten phases that closed them. Both are records
+now, not plans.
 
 ### Updating
 
@@ -365,4 +388,6 @@ unreachable registry). `CubePackageRef` is referenced by the exported
 `NopyConfig` but is not itself re-exported, so a consumer cannot name the type —
 one line, not yet fixed. `DOCS-AUDIT.md` tracks the drift in the remaining
 documents; §2.9 (the nopy README shipping yarn-workspace instructions to npmjs)
-is closed, so the keyman README (§2.10) is now the worst of them.
+and §2.10 (the keyman README describing four of nine operations and inventing a
+tenth) are both closed. The keyman README now quotes `helpText()` verbatim and a
+test fails if the two diverge, which is the shape worth copying for nopy.

@@ -16,6 +16,17 @@ running the code, not inferred from reading it; the reproduction is quoted.
 Baseline: 162 tests pass, 98.9 % lines / 96.2 % branches. High coverage is
 context for §1.2, not a defence of it.
 
+## Status
+
+**All 30 findings are closed except the second half of §1.8**, over the ten phases
+of `PLAN.md`. Each one keeps its original text as the record, with what closed it
+quoted underneath; the line numbers still point at `75983ab`, so they are history
+rather than directions. The one deliberate omission is making keys not named `id_*`
+*manageable* — they are now reported rather than silently skipped, and the rest is a
+change to the on-disk layout that wanted sizing first.
+
+Where the audit ends: 336 tests, 99.3 % statements / 95.7 % branches.
+
 ---
 
 ## Contents
@@ -32,7 +43,13 @@ context for §1.2, not a defence of it.
 
 ## 1. Defects
 
-### 1.1 🔴 `keysDir` and `tmpDir` are honoured by half the tool
+### 1.1 ✅ `keysDir` and `tmpDir` are honoured by half the tool — **fixed**
+
+> **Closed in Phase 5.** `main.ts` passes `paths.keysDir` and `paths.tmpDir` to
+> `encrypt` and `decrypt`, neither of which joins `vaultRoot` itself any more, so all
+> five operations agree on the configured directories. `tests/vault-layout.test.ts` is
+> the regression test: non-default names in a real config file, the real loader, one
+> encrypt, and a listing that has to show the key in the vault column.
 
 `resolveConfigPaths()` (`keyman.config.ts:249-259`) resolves all four paths from
 the config, and `keyman.main.ts:18-21` prints them. But dispatch is inconsistent
@@ -81,7 +98,11 @@ goes away rather than becoming a second source of truth.
 See also §5.1 — `DOCS-AUDIT.md` currently lists this layout under *checked and
 accurate*.
 
-### 1.2 🔴 Encrypt and decrypt crash with a raw stack trace on a first run
+### 1.2 ✅ Encrypt and decrypt crash with a raw stack trace on a first run — **fixed**
+
+> **Closed in Phases 1 and 2.** `keyman.cli.ts` is an error boundary — a
+> `UsageError` prints one line, anything else prints its message and exits 1, and
+> neither prints a stack. The two readdirs that threw are guarded (§1.5).
 
 Three `readdirSync` calls have no `existsSync` guard:
 
@@ -131,7 +152,13 @@ rejection is one line rather than an unhandled-rejection stack trace. The missin
 `existsSync` guards — and with them the menu loop surviving a failed operation —
 are Phase 2.
 
-### 1.3 🔴 A missing `age.key` becomes `age -r null`
+### 1.3 ✅ A missing `age.key` becomes `age -r null` — **fixed**
+
+> **Closed in Phase 3.** The recipient is resolved once per session, before any
+> operation that needs one. A null aborts *that operation* with
+> `age-keygen -o <path>` as the remedy and returns to the menu, and is retried on the
+> next attempt, so creating the identity mid-session works. `age -r null` is now
+> unreachable.
 
 `keyman.main.ts:73` and `:80` assert away a null:
 
@@ -169,7 +196,11 @@ recoverable condition: print what to run (`age-keygen -o <keyPath>`) and return
 to the menu. The type already says this is possible; the `!` is the only thing
 claiming otherwise.
 
-### 1.4 🔴 Decrypting into `~/.ssh` silently overwrites an existing key
+### 1.4 ✅ Decrypting into `~/.ssh` silently overwrites an existing key — **fixed**
+
+> **Closed in Phase 4.** Every collision is settled before anything is written: a
+> confirmation per key defaulting to no, and a skip that says what it kept. The user
+> is answering about files that still exist.
 
 `decrypt.ts:47-49` writes the decrypted key and copies the public key with no
 existence check, no confirmation, and no backup.
@@ -195,7 +226,12 @@ since `vault/tmp` is scratch space by design.
 collision, or refuse and name the file. A `--force` equivalent can come later;
 the current default should not be "overwrite".
 
-### 1.5 🟠 `age` or `ssh-keygen` missing is unhandled in encrypt and decrypt
+### 1.5 ✅ `age` or `ssh-keygen` missing is unhandled in encrypt and decrypt — **fixed**
+
+> **Closed in Phase 2.** `runTool` turns `ENOENT` into a `ToolNotFoundError`
+> whose message is an instruction, and keeps it distinct from a tool that ran and
+> refused — whose reason is on stderr and nowhere in execa's message. `encrypt`
+> re-throws it instead of counting it against one key.
 
 Same missing `try/catch` as §1.3. `generateKey` (`generate.ts:51-76`) and
 `copyKey` (`copy.ts:43-57`) both wrap their `execa` calls and report a failure;
@@ -203,7 +239,13 @@ Same missing `try/catch` as §1.3. `generateKey` (`generate.ts:51-76`) and
 the one hard external requirement, per `CLAUDE.md` — choosing Encrypt from the
 menu produces an `ENOENT` stack trace rather than "install age".
 
-### 1.6 🟠 Encrypt copies `.pub` unconditionally and aborts the batch midway
+### 1.6 ✅ Encrypt copies `.pub` unconditionally and aborts the batch midway — **fixed**
+
+> **Closed in Phase 6.** `storeInVault` reads the `.pub` *before* the vault
+> directory exists and derives a missing one with `ssh-keygen -y` — stdout piped,
+> stdin and stderr inherited, because the passphrase prompt goes to stderr — storing
+> the private key alone if it cannot. And a failing key costs one key: `encrypt`
+> collects the failures and names them at the end.
 
 `encrypt.ts:45`:
 
@@ -228,7 +270,12 @@ so, and the process dies via §1.2.
 absent, and wrap the loop body so one bad key costs one key rather than the
 batch.
 
-### 1.7 🟠 `/home/<user>` is hardcoded
+### 1.7 ✅ `/home/<user>` is hardcoded — **fixed**
+
+> **Closed in Phase 8.** `keyman.home.ts` resolves a named user against the
+> sibling of the current home first, then `/home/<user>` and `/Users/<user>`, and
+> reports every path it tried. An unset `HOME` falls back to the passwd entry instead
+> of resolving `.ssh` against the filesystem root.
 
 `keyman.main.ts:33`:
 
@@ -245,7 +292,17 @@ feeds a nonexistent `sshDir` into §1.2 rather than into an error message.
 the home directory up (`getent passwd` / `dscl`) or ask for the path outright.
 Failing that, check `existsSync` and say so.
 
-### 1.8 🟡 Keys not named `id_*` are invisible, silently
+### 1.8 🟡 Keys not named `id_*` are invisible, silently — **half fixed**
+
+> **Partly closed in Phase 8 — the rest is open.** `scanPrivateKeys` classifies a
+> file by reading its first 64 bytes for a private-key header, and List, Copy and
+> Encrypt report what they skipped, with the count, the directory and the reason. So
+> the keys are no longer *silently* invisible.
+>
+> They are still not manageable. The vault layout derives `id_<dir>` from the
+> directory name in four places, so accepting other names changes what is on disk;
+> the plan asked for that to be sized before being committed to, and the report is
+> the tenth of the work that closes most of the surprise. Left deliberately.
 
 Every discovery filter requires the prefix: `copy.ts:9`, `encrypt.ts:14,17`,
 `list.ts:23,51`, and `decrypt.ts:9` reconstructs `id_${dir}`. A key called
@@ -256,7 +313,12 @@ it simply is not in the menu.
 always fine. The gap only bites pre-existing keys, which is exactly the
 population a key manager is adopted to take over.
 
-### 1.9 🟡 `pbcopy` is hardcoded
+### 1.9 ✅ `pbcopy` is hardcoded — **fixed**
+
+> **Closed in Phase 8.** `keyman.clipboard.ts` picks by platform — `pbcopy`,
+> `clip`, or `wl-copy` → `xclip` → `xsel` — falls through only on `ENOENT` (a tool
+> that ran and refused is a real error, not an absent tool), and prints the key when
+> nothing is installed, since printing it was always the point.
 
 `copy.ts:49`, with the comment above it admitting the shortcut:
 
@@ -271,7 +333,13 @@ before install. `xclip`/`wl-copy`/`clip.exe` by platform is a handful of lines;
 alternatively print the key to stdout as a fallback so the operation is never a
 dead end.
 
-### 1.10 🟡 Smaller things
+### 1.10 ✅ Smaller things — **fixed**
+
+> **Closed in Phases 2, 6 and 8.** All four: the `statSync` takes
+> `throwIfNoEntry: false` and still follows a symlink to a real directory; both
+> `replace` calls are anchored to `/^id_/`; a failed `age` now removes the file it
+> named and the directory while it is empty, so nothing half-made is left claiming to
+> hold a key; and both `console.log` debug lines are gone.
 
 - **`listKeys` throws on a broken symlink.** `list.ts:80` calls `fs.statSync` on
   every entry in the keys directory; a dangling symlink throws `ENOENT`, and
@@ -296,7 +364,12 @@ dead end.
 
 ## 2. Security
 
-### 2.1 🔴 Decrypted private keys are world-readable before the chmod
+### 2.1 ✅ Decrypted private keys are world-readable before the chmod — **fixed**
+
+> **Closed in Phase 4.** `fs.chmodSync(…, 0o600)` in-process, immediately after
+> `age` returns — no `cp` or `chmod` spawn, so there is no window and no failure mode
+> that leaves the mode behind. Confirmed again while probing Phase 10: age still
+> writes 0644, and `ssh-keygen -y` refuses such a file outright.
 
 `decrypt.ts:47-50` decrypts, then copies, then chmods — in three separate
 processes:
@@ -326,7 +399,11 @@ missing. Replacing `cp` and `chmod` with `fs.copyFileSync` / `fs.chmodSync` also
 removes two shell-outs that do not work on Windows and cuts three spawns per key
 to one.
 
-### 2.2 🟠 The passphrase is passed on the `ssh-keygen` command line
+### 2.2 ✅ The passphrase is passed on the `ssh-keygen` command line — **fixed**
+
+> **Closed in Phase 6.** The prompt is gone and so is `-N`: `ssh-keygen` collects
+> and confirms the passphrase itself with stdio inherited. A passphrase keyman never
+> learns cannot leak from keyman — and a test asserts it never asks for one.
 
 `generate.ts:53`:
 
@@ -344,7 +421,13 @@ asks twice and confirms, so keyman's own password prompt (`generate.ts:26-33`)
 can go away rather than being replaced. That keeps the passphrase off argv
 without keyman ever holding it.
 
-### 2.3 🟠 The age recipient is trusted from a comment, never verified
+### 2.3 ✅ The age recipient is trusted from a comment, never verified — **fixed**
+
+> **Closed in Phase 3.** `age-keygen -y` derives the recipient from the secret
+> key, so it cannot disagree with it. The comment survives only as a fallback for a
+> machine with no `age-keygen`, behind a warning that it is unverified — and
+> deliberately *not* as a fallback for `age-keygen` refusing the file, which means
+> age cannot read the identity at all.
 
 `extractAgePublicKey` (`utils.ts:16`) regexes the recipient out of a comment
 line in the identity file:
@@ -363,7 +446,12 @@ and is exactly the tool for this. Note that `age-keygen` is currently not
 invoked anywhere in the source, despite `CLAUDE.md` listing it among the
 binaries keyman shells out to (§5.5).
 
-### 2.4 🟡 Nothing manages the plaintext left in `vault/tmp`
+### 2.4 ✅ Nothing manages the plaintext left in `vault/tmp` — **fixed**
+
+> **Closed in Phase 8.** A **🧹 Clear decrypted keys** operation that lists what it
+> will delete and asks before deleting it, plus a `.gitignore` written beside the
+> vault covering the identity and the tmp directory — never overwriting one that is
+> already there, and never claiming to cover a path outside the vault.
 
 Decrypted keys accumulate in `vault/tmp` indefinitely. There is no shred
 operation, no warning on exit, and keyman never writes the `.gitignore` its own
@@ -378,7 +466,11 @@ reaches a public repository — which is the threat this tool exists to address.
 
 ## 3. Unimplemented and dead
 
-### 3.1 🟠 There is no `--help`
+### 3.1 ✅ There is no `--help` — **fixed**
+
+> **Closed in Phase 1.** `helpText()` in `keyman.args.ts`, checked against the
+> parser's own flag table by a test so a new flag cannot ship undocumented, and now
+> quoted verbatim in the README by a second test (§5.3).
 
 `keyman.cli.ts` handles `--print-config`, `--version`/`-V`, and
 `self-update`/`upgrade`, then falls through to the interactive session. `--help`
@@ -411,7 +503,12 @@ need the behaviour.
 `catch` around `keyman()` in `keyman.cli.ts` turns `ExitPromptError` into
 "👋 Goodbye!" and exit 0, and anything else into one line and exit 1.
 
-### 3.2 🟡 `flagValue` accepts things that are not values
+### 3.2 ✅ `flagValue` accepts things that are not values — **fixed**
+
+> **Closed in Phase 1.** `parseArgs` rejects a value flag with no value, a boolean
+> flag given one, an unknown flag, an unknown command, an unknown channel, and a
+> self-update-only flag used without `self-update`. `--channel --force` is now a
+> usage error rather than a request for a dist-tag that cannot exist.
 
 `keyman.cli.ts:24-27` is `args.indexOf(name)` and `args[index + 1]`:
 
@@ -429,7 +526,11 @@ error.
 rejects a flag swallowed as another flag's value, and validates `--channel`
 against `CHANNELS`.
 
-### 3.3 🟡 The `resolution` merge machinery has no effect
+### 3.3 ✅ The `resolution` merge machinery has no effect — **fixed**
+
+> **Closed in Phase 7 — deleted.** Every keyman property is a string, so a child
+> simply wins; `mergeConfigs` is one spread with a comment recording why nopy needs
+> more and keyman does not. `keyman.config.ts` lost ~45 lines.
 
 `keyman.config.ts` carries `ResolutionStrategy`, `KeymanResolutionConfig`,
 `mergeValue` and `mergeConfigs` — roughly 45 lines, imported from nopy's design.
@@ -456,7 +557,11 @@ comment, or keep it deliberately as the shape a future object-valued or
 array-valued option would need — and say so in a comment, since right now it
 reads as functional.
 
-### 3.4 🟡 `getConfigPaths()` is exported, tested, and called by nothing
+### 3.4 ✅ `getConfigPaths()` is exported, tested, and called by nothing — **fixed**
+
+> **Closed in Phase 7.** `describeConfig()` calls it, so `--print-config` prints
+> `configFiles` — the files that were merged, in merge order. That was the one
+> question the flag could not answer, and it existed only as unstructured stderr.
 
 `keyman.config.ts:265` is used only by `config.test.ts:122,131`. It is not
 re-exported from `src/index.ts` and not called by the CLI. nopy's equivalent
@@ -469,7 +574,12 @@ is not machine-readable and is interleaved with warnings. Folding
 `getConfigPaths()` into the `--print-config` JSON makes the function earn its
 keep and makes the escape hatch answer the question it is for.
 
-### 3.5 🟡 A typo in `.keymanrc.json` is silent
+### 3.5 ✅ A typo in `.keymanrc.json` is silent — **fixed**
+
+> **Closed in Phase 7.** `warnUnknownKeys` names the file, the keys it ignored and
+> the keys it knows. Warned rather than fatal, which is this module's posture
+> throughout, and warned per file because that is the only place the filename is in
+> hand.
 
 `KeymanConfigSchema` is a plain `z.object`, which strips unknown keys.
 
@@ -483,14 +593,25 @@ turns a silently wrong vault into one line of output. Since `loadConfig` already
 degrades to defaults rather than throwing, a warning fits the module's existing
 posture better than a hard failure.
 
-### 3.6 🟠 "Support for key rotation" does not exist
+### 3.6 ✅ "Support for key rotation" does not exist — **fixed**
+
+> **Closed in Phase 10 — built.** `keyman.rotate.ts`: **🔄 Rotate key** generates a
+> replacement under the next name in the series and encrypts it *alongside* the
+> original, and **🗑️ Retire key** deletes the superseded key after listing every path
+> that goes, asking for the name to be typed out when nothing in the vault supersedes
+> it. Two operations rather than one, because a rotation that replaces the key in
+> place locks you out of the host you were rotating for.
 
 `README.md:11`. `grep -rn "rotat" packages/keyman/src/` returns nothing. Already
 tracked as `DOCS-AUDIT.md` §2.10, still open. Rotation is a genuinely useful
 operation for this tool — generate a replacement, encrypt it, keep the old one
 until the new one is deployed — so this is worth building rather than deleting.
 
-### 3.7 🟡 "Copy public key and create README"
+### 3.7 ✅ "Copy public key and create README" — **fixed**
+
+> **Closed in Phase 5.** The comment went with the rewrite of `encrypt`. No
+> per-key README was ever written and nothing claims one now; the `README.md` fixture
+> in `decrypt.test.ts` is a stray-file case, which `listVaultKeys` ignores.
 
 `encrypt.ts:44` says it; no README is written. Suggestively,
 `decrypt.test.ts:75` places a `README.md` inside the keys directory as a
@@ -501,14 +622,20 @@ it or drop the half of the comment that lies.
 
 ## 4. Public API and packaging
 
-### 4.1 🟡 A shebang on the library entry point
+### 4.1 ✅ A shebang on the library entry point — **fixed**
+
+> **Closed in Phase 9.** The shebang is gone, with a comment saying why the file
+> does not want one. Verified against the built `dist/index.js`.
 
 `src/index.ts:1` is `#!/usr/bin/env node`. The bin is `dist/keyman.cli.js`
 (`package.json:28`); `index.ts` is the `exports["."]` target and is only ever
 imported. nopy's `src/index.ts` has no shebang. Harmless, and a copy-paste
 artefact.
 
-### 4.2 🟡 The exported functions' types are not exported
+### 4.2 ✅ The exported functions' types are not exported — **fixed**
+
+> **Closed in Phase 9.** `KeymanConfig` and `KeymanConfigFile` are exported;
+> `ResolutionStrategy` and `KeymanResolutionConfig` no longer exist (§3.3).
 
 `src/index.ts:2` exports `loadConfig` and `resolveConfigPaths`. It does not
 export `KeymanConfig`, `KeymanConfigFile`, `ResolutionStrategy` or
@@ -516,7 +643,13 @@ export `KeymanConfig`, `KeymanConfigFile`, `ResolutionStrategy` or
 returns or what `resolveConfigPaths` takes. This is the same one-line omission
 `CLAUDE.md` already records for nopy's `CubePackageRef`.
 
-### 4.3 🟡 `export * from './keyman.main.js'` exports only `keyman()`
+### 4.3 ✅ `export * from './keyman.main.js'` exports only `keyman()` — **fixed**
+
+> **Closed in Phase 9 — decided, and written down.** The surface is deliberately
+> narrow: config resolution, the update machinery, and `keyman()`. The operation
+> modules stay internal because every one of them prompts, prints and spawns, so
+> there is nothing to do with a single one except rebuild the menu around it. The
+> rule is now a comment at the top of `src/index.ts` rather than an accident.
 
 The five operation modules and `extractAgePublicKey` are not on the public
 surface, so the package is consumable as a library only as "run the entire
@@ -524,7 +657,11 @@ interactive menu". That may well be intended — but then `loadConfig` and
 `resolveConfigPaths` being exported is the odd part, since a consumer can obtain
 the paths and do nothing with them.
 
-### 4.4 🟡 Update-module constants are half re-exported
+### 4.4 ✅ Update-module constants are half re-exported — **fixed**
+
+> **Closed in Phase 9.** `export * from './keyman.update.js'`, so the rule is
+> "all of it" and the list cannot drift again. Verified by importing the built
+> `dist/index.js` and reading its keys.
 
 `keyman.update.ts` exports `SCOPE`, `UPDATE_CACHE_DIR`, `UPDATE_CACHE_FILE`,
 `DEFAULT_FETCH_TIMEOUT_MS` and `DEFAULT_CONFIG_TIMEOUT_MS`; `src/index.ts:12-31`
@@ -535,7 +672,11 @@ re-exports neither, while re-exporting `DEFAULT_CHECK_INTERVAL_MS` and
 
 ## 5. Documentation drift
 
-### 5.1 🟠 `DOCS-AUDIT.md` lists §1.1 under *checked and accurate*
+### 5.1 ✅ `DOCS-AUDIT.md` lists §1.1 under *checked and accurate* — **fixed**
+
+> **Closed in Phase 5.** The claim `DOCS-AUDIT.md` makes — that the documented
+> vault layout matches the code — is now *true*, which is the substance of it; §1.1 is
+> what made it false. The entry has been amended to say what it actually checked.
 
 `DOCS-AUDIT.md:826-827`:
 
@@ -547,7 +688,12 @@ The first two clauses are correct. The third holds only because
 the file that ignores the config is what made §1.1 invisible. The entry should
 move out of section 7 and point at §1.1.
 
-### 5.2 🟠 `README.md` operations list — still open
+### 5.2 ✅ `README.md` operations list — **fixed**
+
+> **Closed in Phase 9.** All nine menu entries are documented, and a test asserts
+> the README contains every label `keyman.main.ts` offers, so a tenth cannot arrive
+> undocumented. Encrypt is described as it behaves: the union of `~/.ssh` and the tmp
+> directory.
 
 `DOCS-AUDIT.md` §2.10, re-verified: `README.md:90-96` lists four menu entries;
 `main.ts:54-61` has six. `Copy public key` and `Generate key` are undocumented —
@@ -556,7 +702,12 @@ Start at `README.md:33` tells the user to run `ssh-keygen` by hand.
 `README.md:93` says encrypt takes keys "from `vault/tmp/`"; `encrypt.ts:12-20`
 unions `~/.ssh` and tmp and offers both.
 
-### 5.3 🟠 The README documents none of the CLI surface
+### 5.3 ✅ The README documents none of the CLI surface — **fixed**
+
+> **Closed in Phase 9.** The README carries `helpText()` verbatim — every flag,
+> both subcommand spellings, and all five environment variables — with a test that
+> fails if the two diverge. Installation, the update channels and the once-a-day
+> check are documented too.
 
 `README.md` covers the interactive menu and the config file. It does not mention:
 
@@ -571,13 +722,24 @@ only `dist`, `README.md` and `LICENSE` — so a reader on the registry sees none
 it. This is the same shape as the nopy README problem closed as
 `DOCS-AUDIT.md` §2.9, and keyman is now the worse of the two.
 
-### 5.4 🟠 The README presents a configurable layout that is half-real
+### 5.4 ✅ The README presents a configurable layout that is half-real — **fixed**
+
+> **Closed in Phase 9.** The section documents what §1.1 made true: the three
+> inner names resolve against `vaultRoot`, a relative `vaultRoot` in a config file
+> resolves against that file's directory, and the built-in default resolves against
+> the current directory. It ends with the migration note for a vault written by the
+> old `encrypt`.
 
 `README.md:46-70` documents `keysDir` and `tmpDir` as configuration, and
 `:72-86` draws the default tree. Per §1.1 the first is only half true. Whichever
 way §1.1 is resolved, this section needs an edit.
 
-### 5.5 🟡 `CLAUDE.md` names a binary keyman never runs
+### 5.5 ✅ `CLAUDE.md` names a binary keyman never runs — **fixed**
+
+> **Closed in Phases 3 and 9.** `age-keygen` became true in Phase 3 (`-y`, to
+> derive the recipient), and `cp`/`chmod` stopped being spawned in Phase 4.
+> `CLAUDE.md` now says all of that, records the deliberate `resolution` divergence
+> from nopy, and lists the operations the menu actually has.
 
 > Encryption shells out to `age` / `age-keygen` / `ssh-keygen`, which must be on
 > `PATH`.
@@ -626,6 +788,10 @@ nothing.
 ---
 
 ## Suggested order of attack
+
+> Superseded by `PLAN.md`, which turned this into ten phases and is the record of
+> what was actually done in what order. Kept because the reasoning about which
+> findings share a shape is still the reason the phases group the way they do.
 
 **1 — the crashes, together.** §1.2, §1.3, §1.5 and §1.10's `statSync` are all
 the same shape: an unguarded call in a function with no error boundary, reaching

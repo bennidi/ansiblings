@@ -9,6 +9,25 @@ boundary comes first because it makes every later phase's failure mode legible,
 and the config threading comes late because it is the only phase that rewrites
 existing test assertions.
 
+## Status
+
+**All ten phases have landed**, one commit each, on the `keyman-remediation`
+branch. Three deviations worth knowing about:
+
+- **Phase 6's literal instruction was impossible.** "Move the `mkdirSync` after
+  `age` succeeds" cannot be done — `age -o` will not create its output directory.
+  The goal (no leftover directory) is met by cleaning up on failure instead, which
+  also removes a truncated `.age` the plan had not accounted for.
+- **§1.8 is half done, deliberately**, exactly as the plan asked: the skipped-key
+  report is in, the layout change that would make non-`id_*` keys manageable is
+  not. See `AUDIT.md` §1.8.
+- **Rollout has not been done.** No version bump, no tag, nothing published — the
+  cut points below are still proposals, and pushing this branch to `main` would
+  publish a snapshot, so that is the user's call to make.
+
+Both open decisions were resolved the way the plan recommended: the `resolution`
+machinery was deleted, and rotation was built.
+
 ## Verified before planning
 
 Four things the fixes depend on, checked by running them rather than assumed —
