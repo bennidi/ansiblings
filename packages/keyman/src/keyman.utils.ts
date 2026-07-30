@@ -1,6 +1,14 @@
 import fs from 'node:fs';
 import { execa, type Options } from 'execa';
 
+/** A binary keyman needs is not installed — recoverable, unlike a tool refusing */
+export class ToolNotFoundError extends Error {
+  constructor(readonly binary: string) {
+    super(`\`${binary}\` was not found on PATH. Install it and try again.`);
+    this.name = 'ToolNotFoundError';
+  }
+}
+
 /**
  * Runs one of the external binaries keyman depends on.
  *
@@ -27,23 +35,57 @@ export async function runTool(
   } catch (error) {
     const failure = error as { code?: string; stderr?: string; shortMessage?: string };
     if (failure.code === 'ENOENT') {
-      throw new Error(`\`${binary}\` was not found on PATH. Install it and try again.`);
+      throw new ToolNotFoundError(binary);
     }
     throw new Error(`\`${binary}\` failed: ${failure.stderr?.trim() || failure.shortMessage}`);
   }
 }
 
 /**
- * Extracts the public key from an age key file.
- * @param keyFilePath Path to the age key file.
- * @returns The public key as a string, or null if not found.
+ * The age recipient a vault encrypts to, derived from its identity file.
+ *
+ * `age-keygen -y` derives the public key from the secret key, so it cannot
+ * disagree with it. The `# public key:` comment can: it is ordinary text that
+ * nothing re-checks, and a wrong one encrypts the vault to a recipient nobody
+ * holds the private half of. Verified — rewriting the comment does not change
+ * what `-y` reports.
+ *
+ * The comment stays as a fallback for a machine with no `age-keygen`, behind a
+ * warning that it is unverified. It is *not* a fallback for `age-keygen`
+ * refusing the file: that means age cannot read the identity, and trusting the
+ * comment then would encrypt to a recipient the vault could never decrypt with.
+ *
+ * @returns the recipient, or null with the reason already reported
  */
-export function extractAgePublicKey(keyFilePath: string): string | null {
+export async function extractAgePublicKey(keyFilePath: string): Promise<string | null> {
   if (!fs.existsSync(keyFilePath)) {
     console.error(`❌ ERROR: Age key file not found at ${keyFilePath}`);
     return null;
   }
 
+  try {
+    const { stdout } = await runTool('age-keygen', ['-y', keyFilePath]);
+    const derived = stdout.trim();
+    if (derived.startsWith('age1')) {
+      return derived;
+    }
+    console.error(`❌ ERROR: age-keygen derived no public key from ${keyFilePath}`);
+    return null;
+  } catch (error) {
+    if (!(error instanceof ToolNotFoundError)) {
+      console.error(`❌ ERROR: ${error instanceof Error ? error.message : error}`);
+      return null;
+    }
+    console.warn(
+      `⚠️  age-keygen is not installed — reading the public key from the comment in ${keyFilePath}, unverified against the secret key.`
+    );
+  }
+
+  return publicKeyFromComment(keyFilePath);
+}
+
+/** The `# public key:` line: a claim about the key rather than a derivation from it */
+function publicKeyFromComment(keyFilePath: string): string | null {
   try {
     const fileContents = fs.readFileSync(keyFilePath, 'utf-8');
     const publicKeyMatch = fileContents.match(/^# public key:\s*(age1[^\s]+)/m);

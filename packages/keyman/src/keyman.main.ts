@@ -44,6 +44,18 @@ export async function keyman() {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
+  // Resolved on demand, because only generate and encrypt need a recipient, and
+  // remembered once it succeeds. Retried while it has not: creating the identity
+  // mid-session should not mean restarting.
+  let recipient: string | null = null;
+  const ageRecipient = async () => {
+    recipient ??= await extractAgePublicKey(paths.keyPath);
+    if (!recipient) {
+      console.error(`   Create one with: age-keygen -o ${paths.keyPath}`);
+    }
+    return recipient;
+  };
+
   // Main loop - keep showing menu until user quits
   let running = true;
   while (running) {
@@ -73,17 +85,20 @@ export async function keyman() {
       case 'copy':
         await copyKey(sshDir, paths.tmpDir);
         break;
-      case 'generate':
-        await generateKey(paths.tmpDir, paths.keysDir, extractAgePublicKey(paths.keyPath)!);
+      case 'generate': {
+        const pubkey = await ageRecipient();
+        if (pubkey) {
+          await generateKey(paths.tmpDir, paths.keysDir, pubkey);
+        }
         break;
-      case 'encrypt':
-        await encryptKeys(
-          sshDir,
-          paths.vaultRoot,
-          paths.tmpDir,
-          extractAgePublicKey(paths.keyPath)!
-        );
+      }
+      case 'encrypt': {
+        const pubkey = await ageRecipient();
+        if (pubkey) {
+          await encryptKeys(sshDir, paths.vaultRoot, paths.tmpDir, pubkey);
+        }
         break;
+      }
       case 'decrypt':
         await decryptKeys(sshDir, paths.vaultRoot, paths.keyPath);
         break;

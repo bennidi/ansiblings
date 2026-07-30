@@ -81,7 +81,7 @@ describe('keyman', () => {
       ageKeyFile: 'age.key',
     });
     resolveConfigPaths.mockReturnValue(paths);
-    extractAgePublicKey.mockReturnValue('age1recipient');
+    extractAgePublicKey.mockResolvedValue('age1recipient');
 
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -195,6 +195,55 @@ describe('keyman', () => {
       paths.vaultRoot,
       paths.keyPath
     );
+  });
+
+  describe('without an age recipient', () => {
+    beforeEach(() => {
+      extractAgePublicKey.mockResolvedValue(null);
+    });
+
+    it.each([
+      ['generate', generateKey],
+      ['encrypt', encryptKeys],
+    ])('refuses %s with a remedy instead of passing null to age', async (choice, operation) => {
+      menu([choice]);
+
+      await keyman();
+
+      expect(operation).not.toHaveBeenCalled();
+      const reported = errorSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+      expect(reported).toContain(`age-keygen -o ${paths.keyPath}`);
+      // The whole point: the loop survives and quit is still reached.
+      expect(output()).toContain('Goodbye!');
+    });
+
+    it('still allows the operations that need no recipient', async () => {
+      menu(['list', 'decrypt']);
+
+      await keyman();
+
+      expect(listKeys).toHaveBeenCalled();
+      expect(decryptKeys).toHaveBeenCalled();
+    });
+
+    it('retries the lookup, so creating the identity mid-session works', async () => {
+      extractAgePublicKey.mockResolvedValueOnce(null).mockResolvedValueOnce('age1later');
+      menu(['generate', 'generate']);
+
+      await keyman();
+
+      expect(extractAgePublicKey).toHaveBeenCalledTimes(2);
+      expect(generateKey).toHaveBeenCalledTimes(1);
+      expect(generateKey).toHaveBeenCalledWith(paths.tmpDir, paths.keysDir, 'age1later');
+    });
+  });
+
+  it('resolves the recipient once for repeated operations', async () => {
+    menu(['generate', 'encrypt']);
+
+    await keyman();
+
+    expect(extractAgePublicKey).toHaveBeenCalledTimes(1);
   });
 
   it('keeps showing the menu until the user quits', async () => {
