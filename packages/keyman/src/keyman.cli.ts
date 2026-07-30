@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { createRequire } from 'node:module';
+import { helpText, type ParsedArgs, parseArgs, UsageError } from './keyman.args.js';
 import { loadConfig, resolveConfigPaths } from './keyman.config.js';
 import { keyman } from './keyman.main.js';
-import type { Channel } from './keyman.update.js';
 import { formatCommand, selfUpdate, updateNotice } from './keyman.update.js';
 
 const { version, buildInfo } = createRequire(import.meta.url)('../package.json') as {
@@ -18,35 +18,42 @@ const { version, buildInfo } = createRequire(import.meta.url)('../package.json')
  */
 const versionLabel = buildInfo?.commit ? `${version} (${buildInfo.commit})` : version;
 
-const args = process.argv.slice(2);
-
-/** Reads `--flag value` out of argv, or undefined when the flag is absent */
-function flagValue(name: string): string | undefined {
-  const index = args.indexOf(name);
-  return index === -1 ? undefined : args[index + 1];
+let parsed: ParsedArgs;
+try {
+  parsed = parseArgs(process.argv.slice(2));
+} catch (error) {
+  if (!(error instanceof UsageError)) throw error;
+  console.error(`❌ ${error.message}`);
+  console.error('Run `keyman --help` for usage.');
+  process.exit(2);
 }
 
-if (args.includes('--print-config')) {
+if (parsed.command === 'help') {
+  console.log(helpText());
+  process.exit(0);
+}
+
+if (parsed.command === 'print-config') {
   const config = loadConfig();
   const paths = resolveConfigPaths(config);
   console.log(JSON.stringify(paths));
   process.exit(0);
 }
 
-if (args.includes('--version') || args.includes('-V')) {
+if (parsed.command === 'version') {
   console.log(versionLabel);
   process.exit(0);
 }
 
-if (args[0] === 'self-update' || args[0] === 'upgrade' || args.includes('--self-update')) {
-  const dryRun = args.includes('--dry-run') || args.includes('-n');
+if (parsed.command === 'self-update') {
+  const { dryRun } = parsed;
   try {
     const result = await selfUpdate({
       currentVersion: version,
-      channel: flagValue('--channel') as Channel | undefined,
-      registry: flagValue('--registry'),
+      channel: parsed.channel,
+      registry: parsed.registry,
       dryRun,
-      force: args.includes('--force') || args.includes('-f'),
+      force: parsed.force,
     });
 
     const { status } = result;
@@ -79,4 +86,15 @@ if (notice) {
   console.error(`\n${notice}\n`);
 }
 
-keyman();
+try {
+  await keyman();
+} catch (error) {
+  // Ctrl-C at any inquirer prompt lands here. `name`, not `instanceof`:
+  // @inquirer/core is transitive and does not resolve from this package.
+  if ((error as { name?: string }).name === 'ExitPromptError') {
+    console.log('\n👋 Goodbye!\n');
+    process.exit(0);
+  }
+  console.error(`❌ ${error instanceof Error ? error.message : error}`);
+  process.exit(1);
+}
