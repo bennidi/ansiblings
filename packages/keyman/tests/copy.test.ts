@@ -10,11 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { execa, prompt, stdin } = vi.hoisted(() => ({
-  execa: vi.fn(),
-  prompt: vi.fn(),
-  stdin: { write: vi.fn(), end: vi.fn() },
-}));
+const { execa, prompt } = vi.hoisted(() => ({ execa: vi.fn(), prompt: vi.fn() }));
 
 vi.mock('execa', () => ({ execa }));
 vi.mock('inquirer', () => ({ default: { prompt } }));
@@ -27,6 +23,7 @@ describe('copyKey', () => {
   let tmpDir: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   const touch = (dir: string, file: string, contents = '') => {
     fs.mkdirSync(dir, { recursive: true });
@@ -39,6 +36,9 @@ describe('copyKey', () => {
   /** The choices offered by the last inquirer.prompt call. */
   const choices = () => prompt.mock.calls.at(-1)?.[0][0].choices as string[];
 
+  /** What was piped into the clipboard command. */
+  const piped = () => (execa.mock.calls.at(-1)?.[2] as { input?: string } | undefined)?.input;
+
   beforeEach(() => {
     vi.clearAllMocks();
     root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'keyman-copy-')));
@@ -46,9 +46,9 @@ describe('copyKey', () => {
     tmpDir = path.join(root, 'tmp');
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const proc = Object.assign(Promise.resolve({ exitCode: 0 }), { stdin });
-    execa.mockReturnValue(proc);
+    execa.mockResolvedValue({ stdout: '' });
   });
 
   afterEach(() => {
@@ -93,9 +93,7 @@ describe('copyKey', () => {
 
     await copyKey(sshDir, tmpDir);
 
-    expect(execa).toHaveBeenCalledWith('pbcopy');
-    expect(stdin.write).toHaveBeenCalledWith('ssh-ed25519 AAAA tmp');
-    expect(stdin.end).toHaveBeenCalled();
+    expect(piped()).toBe('ssh-ed25519 AAAA tmp');
     expect(messages(logSpy)).toContain('copied to clipboard');
   });
 
@@ -106,7 +104,7 @@ describe('copyKey', () => {
 
     await copyKey(sshDir, tmpDir);
 
-    expect(stdin.write).toHaveBeenCalledWith('ssh-ed25519 AAAA ssh');
+    expect(piped()).toBe('ssh-ed25519 AAAA ssh');
   });
 
   it('reports a missing public key without invoking the clipboard', async () => {
@@ -123,11 +121,38 @@ describe('copyKey', () => {
     touch(sshDir, 'id_prod');
     touch(sshDir, 'id_prod.pub', 'ssh-ed25519 AAAA ssh');
     prompt.mockResolvedValue({ selectedKey: 'id_prod' });
-    execa.mockImplementation(() => {
-      throw new Error('pbcopy missing');
-    });
+    execa.mockRejectedValue(Object.assign(new Error('refused'), { stderr: 'no display' }));
 
     await expect(copyKey(sshDir, tmpDir)).resolves.toBeUndefined();
     expect(messages(errorSpy)).toContain('Failed to copy to clipboard');
+  });
+
+  it('prints the key when no clipboard command exists at all', async () => {
+    touch(sshDir, 'id_prod');
+    touch(sshDir, 'id_prod.pub', 'ssh-ed25519 AAAA ssh');
+    prompt.mockResolvedValue({ selectedKey: 'id_prod' });
+    execa.mockImplementation(async () => {
+      throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
+    });
+
+    await copyKey(sshDir, tmpDir);
+
+    // The operation is "give me this public key". Without a clipboard it is still
+    // answerable, and it used to be a dead end on every platform but macOS.
+    expect(messages(logSpy)).toContain('ssh-ed25519 AAAA ssh');
+    expect(messages(warnSpy)).toContain('No clipboard command found');
+  });
+
+  it('names the private keys it cannot manage', async () => {
+    touch(sshDir, 'id_prod');
+    touch(sshDir, 'id_prod.pub', 'PUBLIC');
+    touch(sshDir, 'deploy_ed25519', '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n');
+    prompt.mockResolvedValue({ selectedKey: 'id_prod' });
+
+    await copyKey(sshDir, tmpDir);
+
+    expect(choices()).toEqual(['id_prod']);
+    expect(messages(logSpy)).toContain('deploy_ed25519');
+    expect(messages(logSpy)).toContain('not named id_*');
   });
 });

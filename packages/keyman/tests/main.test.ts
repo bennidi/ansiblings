@@ -136,6 +136,7 @@ describe('keyman', () => {
       'generate',
       'encrypt',
       'decrypt',
+      'clear',
       'quit',
     ]);
   });
@@ -257,21 +258,55 @@ describe('keyman', () => {
   });
 
   it('targets another user home directory when a user is named', async () => {
+    // A real sibling of the current HOME, because resolveHomeDir checks that the
+    // directory exists rather than assuming a layout.
+    const deployHome = path.join(root, 'deploy');
+    fs.mkdirSync(deployHome, { recursive: true });
     menu(['list'], 'deploy');
 
     await keyman();
 
-    expect(listKeys).toHaveBeenCalledWith('/home/deploy/.ssh', paths.keysDir, paths.tmpDir);
+    expect(listKeys).toHaveBeenCalledWith(
+      path.join(deployHome, '.ssh'),
+      paths.keysDir,
+      paths.tmpDir
+    );
   });
 
-  it('aborts when the home directory cannot be determined', async () => {
-    delete process.env.HOME;
+  it('aborts when the named user has no home directory', async () => {
+    menu(['list'], 'nobody-at-all');
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit');
     });
 
     await expect(keyman()).rejects.toThrow('process.exit');
     expect(exit).toHaveBeenCalledWith(1);
-    expect(errorSpy.mock.calls[0][0]).toContain('Unable to determine HOME directory');
+    expect(errorSpy.mock.calls[0][0]).toContain('No home directory found');
+  });
+
+  it('writes a .gitignore next to the vault so it cannot be committed', async () => {
+    await keyman();
+
+    const contents = fs.readFileSync(path.join(paths.vaultRoot, '.gitignore'), 'utf-8');
+    // The README used to ask the user to do this by hand.
+    expect(contents).toContain('age.key');
+    expect(contents).toContain('tmp/');
+  });
+
+  it('clears the decrypted keys on request', async () => {
+    fs.mkdirSync(paths.tmpDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.tmpDir, 'id_prod'), 'PRIVATE');
+    // Not the `menu` helper: this one has to answer the confirmation too.
+    const queue = ['clear', 'quit'];
+    prompt.mockImplementation(async (questions: { name: string }[]) => {
+      const { name } = questions[0];
+      if (name === 'user') return { user: '@current' };
+      if (name === 'confirmed') return { confirmed: true };
+      return { category: queue.shift() };
+    });
+
+    await keyman();
+
+    expect(fs.existsSync(path.join(paths.tmpDir, 'id_prod'))).toBe(false);
   });
 });

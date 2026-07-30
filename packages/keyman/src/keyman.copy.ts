@@ -1,18 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execa } from 'execa';
 import inquirer from 'inquirer';
+import { copyToClipboard } from './keyman.clipboard.js';
+import { reportSkippedKeys, scanPrivateKeys } from './keyman.keys.js';
 
 export async function copyKey(sshDir: string, tmpDir: string) {
-  const getKeys = (dir: string) => {
-    if (!fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir).filter((key) => key.startsWith('id_') && !key.endsWith('.pub'));
-  };
+  const ssh = scanPrivateKeys(sshDir);
+  const tmp = scanPrivateKeys(tmpDir);
 
-  const sshKeys = getKeys(sshDir);
-  const tmpKeys = getKeys(tmpDir);
+  const keys = [...new Set([...ssh.keys, ...tmp.keys])];
 
-  const keys = [...new Set([...sshKeys, ...tmpKeys])];
+  // Before the empty check: "no SSH keys found" next to four unmanageable ones is
+  // the case the report exists for.
+  reportSkippedKeys(ssh.skipped, sshDir);
+  reportSkippedKeys(tmp.skipped, tmpDir);
 
   if (keys.length === 0) {
     console.log('⚠️ No SSH keys found.');
@@ -40,19 +41,23 @@ export async function copyKey(sshDir: string, tmpDir: string) {
     return;
   }
 
+  const pubKeyContent = fs.readFileSync(pubKeyPath, 'utf-8').trim();
+
   try {
-    const pubKeyContent = fs.readFileSync(pubKeyPath, 'utf-8').trim();
+    const tool = await copyToClipboard(pubKeyContent);
 
-    // Detect OS and use appropriate clipboard command
-    // Since the environment is Darwin, we prioritize pbcopy, but we can add others for completeness or use a simple check.
-    // For this specific request on Darwin:
-    const proc = execa('pbcopy');
-    proc.stdin?.write(pubKeyContent);
-    proc.stdin?.end();
-    await proc;
-
-    console.log(`✅ Public key for ${selectedKey} copied to clipboard!`);
+    if (tool) {
+      console.log(`✅ Public key for ${selectedKey} copied to clipboard via ${tool}!`);
+      return;
+    }
+    console.warn('⚠️  No clipboard command found.');
   } catch (error) {
-    console.error(`❌ Failed to copy to clipboard: ${error}`);
+    console.error(
+      `❌ Failed to copy to clipboard: ${error instanceof Error ? error.message : error}`
+    );
   }
+
+  // Printing it is the point of the operation; the clipboard was only the
+  // convenient way to deliver it. A public key is not a secret.
+  console.log(`\n${pubKeyContent}\n`);
 }

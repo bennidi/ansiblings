@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { reportSkippedKeys, scanPrivateKeys } from './keyman.keys.js';
 
 interface KeyInfo {
   name: string;
@@ -103,6 +104,12 @@ export async function listKeys(sshDir: string, vaultDir: string, tmpDir: string)
         }
       }
     }
+  }
+
+  // A listing that omits keys without saying so is the worst place for the id_
+  // assumption to be invisible: this is the screen a user checks it against.
+  for (const dir of [sshDir, tmpDir]) {
+    reportSkippedKeys(scanPrivateKeys(dir).skipped, dir);
   }
 
   // Display results

@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import inquirer from 'inquirer';
+import { clearDecryptedKeys, writeVaultGitignore } from './keyman.clear.js';
 import { loadConfig, resolveConfigPaths } from './keyman.config.js';
 import { copyKey } from './keyman.copy.js';
 import { decryptKeys } from './keyman.decrypt.js';
 import { encryptKeys } from './keyman.encrypt.js';
 import { generateKey } from './keyman.generate.js';
+import { CURRENT_USER, resolveHomeDir } from './keyman.home.js';
 import { listKeys } from './keyman.list.js';
 import { extractAgePublicKey } from './keyman.utils.js';
 
@@ -25,14 +27,13 @@ export async function keyman() {
     {
       type: 'input',
       name: 'user',
-      message: 'Specify USER (default: @current):',
-      default: '@current',
+      message: `Specify USER (default: ${CURRENT_USER}):`,
+      default: CURRENT_USER,
     },
   ]);
 
-  const homeDir = user === '@current' ? process.env.HOME || '' : `/home/${user}`;
+  const homeDir = resolveHomeDir(user);
   if (!homeDir) {
-    console.error('Error: Unable to determine HOME directory.');
     process.exit(1);
   }
 
@@ -43,6 +44,7 @@ export async function keyman() {
   for (const dir of [paths.vaultRoot, paths.keysDir, paths.tmpDir]) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
+  writeVaultGitignore(paths.vaultRoot, paths.tmpDir, paths.keyPath);
 
   // Resolved on demand, because only generate and encrypt need a recipient, and
   // remembered once it succeeds. Retried while it has not: creating the identity
@@ -73,6 +75,7 @@ export async function keyman() {
           { name: '🆕 Generate key', value: 'generate' },
           { name: '🔒 Encrypt keys', value: 'encrypt' },
           { name: '🔓 Decrypt keys', value: 'decrypt' },
+          { name: '🧹 Clear decrypted keys', value: 'clear' },
           { name: '❌ Quit', value: 'quit' },
         ],
       },
@@ -101,6 +104,9 @@ export async function keyman() {
       }
       case 'decrypt':
         await decryptKeys(sshDir, paths.keysDir, paths.tmpDir, paths.keyPath);
+        break;
+      case 'clear':
+        await clearDecryptedKeys(paths.tmpDir);
         break;
       case 'quit':
         console.log('\n👋 Goodbye!\n');
