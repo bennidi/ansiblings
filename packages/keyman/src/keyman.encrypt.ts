@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import inquirer from 'inquirer';
-import { runTool } from './keyman.utils.js';
+import { ToolNotFoundError } from './keyman.utils.js';
+import { storeInVault } from './keyman.vault.js';
 
 /**
  * Private keys in a directory that may not exist.
@@ -35,17 +36,30 @@ export async function encryptKeys(sshDir: string, keysDir: string, tmpDir: strin
     },
   ]);
 
+  const failed: string[] = [];
+
   for (const key of selectedKeys) {
     const keyPath = path.join(tmpKeys.includes(key) ? tmpDir : sshDir, key);
-    const vaultPath = path.join(keysDir, key.replace('id_', ''));
-    fs.mkdirSync(vaultPath, { recursive: true, mode: 0o700 });
 
-    // Encrypt key using `age`
-    await runTool('age', ['-r', pubkey, '-o', path.join(vaultPath, `${key}.age`), keyPath]);
+    try {
+      await storeInVault(keyPath, keysDir, pubkey);
+    } catch (error) {
+      // One bad key costs one key. Selecting ten and losing the last nine to an
+      // unreadable first one was the old behaviour, and nothing afterwards said
+      // which of the ten had made it into the vault.
+      if (error instanceof ToolNotFoundError) {
+        // Not a per-key problem: age is missing for all of them, so nine more
+        // identical failures would tell the user nothing new.
+        throw error;
+      }
+      failed.push(key);
+      console.error(`❌ ${key}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
 
-    // Copy public key and create README
-    fs.copyFileSync(`${keyPath}.pub`, path.join(vaultPath, `${key}.pub`));
-
-    console.log(`🔒 Encrypted and stored: ${vaultPath}/${key}`);
+  if (failed.length > 0) {
+    console.log(
+      `\n⚠️  ${failed.length} of ${selectedKeys.length} selected keys were not stored: ${failed.join(', ')}`
+    );
   }
 }

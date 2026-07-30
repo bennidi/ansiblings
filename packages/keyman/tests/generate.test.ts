@@ -42,6 +42,10 @@ describe('generateKey', () => {
   const argsOf = (binary: string) =>
     execa.mock.calls.find((c) => c[0] === binary)?.[1] as string[] | undefined;
 
+  /** The options of the mocked call to `binary`. */
+  const optionsOf = (binary: string) =>
+    execa.mock.calls.find((c) => c[0] === binary)?.[2] as { stdio?: unknown } | undefined;
+
   const messages = (spy: ReturnType<typeof vi.spyOn>) =>
     spy.mock.calls.map((c) => c.join(' ')).join('\n');
 
@@ -64,7 +68,7 @@ describe('generateKey', () => {
       return { exitCode: 0 };
     });
 
-    answer({ algorithm: 'ed25519', keyName: 'prod', password: 'pw', identity: 'me@host' });
+    answer({ algorithm: 'ed25519', keyName: 'prod', identity: 'me@host' });
   });
 
   afterEach(() => {
@@ -80,16 +84,24 @@ describe('generateKey', () => {
       'ed25519',
       '-f',
       path.join(tmpDir, 'id_prod'),
-      '-N',
-      'pw',
       '-C',
       'me@host',
     ]);
     expect(messages(logSpy)).toContain('Key generated');
   });
 
+  it('never handles the passphrase itself', async () => {
+    await generateKey(tmpDir, keysDir, PUBKEY);
+
+    // No -N, so ssh-keygen prompts and confirms; inherited stdio is what makes
+    // that prompt reach the terminal. The passphrase never touches argv.
+    expect(argsOf('ssh-keygen')).not.toContain('-N');
+    expect(optionsOf('ssh-keygen')).toEqual({ stdio: 'inherit' });
+    expect(prompt.mock.calls.map((c) => c[0][0].name)).not.toContain('password');
+  });
+
   it('does not prefix a key name that already starts with id_', async () => {
-    answer({ algorithm: 'ed25519', keyName: 'id_prod', password: '', identity: '' });
+    answer({ algorithm: 'ed25519', keyName: 'id_prod', identity: '' });
 
     await generateKey(tmpDir, keysDir, PUBKEY);
 
@@ -97,7 +109,7 @@ describe('generateKey', () => {
   });
 
   it('requests a 4096 bit key for rsa', async () => {
-    answer({ algorithm: 'rsa', keyName: 'prod', password: '', identity: '' });
+    answer({ algorithm: 'rsa', keyName: 'prod', identity: '' });
 
     await generateKey(tmpDir, keysDir, PUBKEY);
 
@@ -139,17 +151,22 @@ describe('generateKey', () => {
     expect(fs.readFileSync(path.join(tmpDir, 'id_prod'), 'utf-8')).toBe('EXISTING');
   });
 
-  it('reports a failure from ssh-keygen without leaving a vault entry', async () => {
-    execa.mockRejectedValue(new Error('ssh-keygen exploded'));
+  it('reports a failure from ssh-keygen without reaching age', async () => {
+    execa.mockImplementation(async () => {
+      throw Object.assign(new Error('ssh-keygen exploded'), { stderr: 'ssh-keygen exploded' });
+    });
 
     await expect(generateKey(tmpDir, keysDir, PUBKEY)).resolves.toBeUndefined();
-    expect(messages(errorSpy)).toContain('Error generating/encrypting key');
+    expect(messages(errorSpy)).toContain('Error generating key');
+    expect(argsOf('age')).toBeUndefined();
     expect(fs.existsSync(path.join(keysDir, 'prod'))).toBe(false);
   });
 
-  it('reports a failure from age', async () => {
+  it('reports a failure from age and says the key is still there to encrypt', async () => {
     execa.mockImplementation(async (binary: string, args: string[]) => {
-      if (binary === 'age') throw new Error('age exploded');
+      if (binary === 'age') {
+        throw Object.assign(new Error('age exploded'), { stderr: 'age exploded' });
+      }
       const keyPath = args[args.indexOf('-f') + 1];
       fs.writeFileSync(keyPath, 'PRIVATE');
       fs.writeFileSync(`${keyPath}.pub`, 'ssh-ed25519 AAAA generated');
@@ -158,7 +175,11 @@ describe('generateKey', () => {
 
     await generateKey(tmpDir, keysDir, PUBKEY);
 
-    expect(messages(errorSpy)).toContain('Error generating/encrypting key');
-    expect(fs.existsSync(path.join(keysDir, 'prod', 'id_prod.pub'))).toBe(false);
+    expect(messages(errorSpy)).toContain('Error encrypting key');
+    // The generated key is the thing of value, and it survived.
+    expect(fs.existsSync(path.join(tmpDir, 'id_prod'))).toBe(true);
+    expect(messages(errorSpy)).toContain(path.join(tmpDir, 'id_prod'));
+    // And no half-made vault entry was left claiming to hold it.
+    expect(fs.existsSync(path.join(keysDir, 'prod'))).toBe(false);
   });
 });

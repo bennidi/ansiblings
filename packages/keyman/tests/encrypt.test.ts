@@ -163,4 +163,109 @@ describe('encryptKeys', () => {
     expect(execa).not.toHaveBeenCalled();
     expect(fs.existsSync(keysDir)).toBe(false);
   });
+
+  describe('a key with no .pub file', () => {
+    /** A private key without its sibling — what the selection list offers anyway. */
+    const orphan = (dir: string, name: string) => {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, name), `PRIVATE ${name}`);
+    };
+
+    it('derives the public key with ssh-keygen', async () => {
+      orphan(sshDir, 'id_prod');
+      prompt.mockResolvedValue({ selectedKeys: ['id_prod'] });
+      execa.mockImplementation(async (binary: string, args: string[]) => {
+        if (binary === 'ssh-keygen') return { stdout: 'ssh-ed25519 AAAA derived' };
+        fs.writeFileSync(args[args.indexOf('-o') + 1], 'ENCRYPTED');
+        return { stdout: '' };
+      });
+
+      await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
+
+      expect(execa).toHaveBeenCalledWith(
+        'ssh-keygen',
+        ['-y', '-f', path.join(sshDir, 'id_prod')],
+        // stderr inherited so the passphrase prompt is visible, stdout piped so
+        // the derived key can be captured.
+        { stdio: ['inherit', 'pipe', 'inherit'] }
+      );
+      expect(fs.readFileSync(path.join(keysDir, 'prod', 'id_prod.pub'), 'utf-8')).toBe(
+        'ssh-ed25519 AAAA derived\n'
+      );
+    });
+
+    it('stores the private key alone when the derivation fails', async () => {
+      orphan(sshDir, 'id_prod');
+      prompt.mockResolvedValue({ selectedKeys: ['id_prod'] });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      execa.mockImplementation(async (binary: string, args: string[]) => {
+        if (binary === 'ssh-keygen') {
+          throw Object.assign(new Error('bad passphrase'), { stderr: 'incorrect passphrase' });
+        }
+        fs.writeFileSync(args[args.indexOf('-o') + 1], 'ENCRYPTED');
+        return { stdout: '' };
+      });
+
+      await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
+
+      // The encrypted key is what matters; the .pub is recoverable from it later.
+      expect(fs.existsSync(path.join(keysDir, 'prod', 'id_prod.age'))).toBe(true);
+      expect(fs.existsSync(path.join(keysDir, 'prod', 'id_prod.pub'))).toBe(false);
+      expect(messages(warnSpy)).toContain('no public key could be derived');
+    });
+  });
+
+  describe('when one key of several fails', () => {
+    beforeEach(() => {
+      key(sshDir, 'id_prod', 'ssh');
+      key(sshDir, 'id_stage', 'ssh');
+      prompt.mockResolvedValue({ selectedKeys: ['id_prod', 'id_stage'] });
+      // age refuses the first key only.
+      execa.mockImplementation(async (_binary: string, args: string[]) => {
+        if (args.some((arg) => arg.endsWith('id_prod'))) {
+          throw Object.assign(new Error('age refused'), { stderr: 'no identity' });
+        }
+        fs.writeFileSync(args[args.indexOf('-o') + 1], 'ENCRYPTED');
+        return { stdout: '' };
+      });
+    });
+
+    it('still encrypts the rest', async () => {
+      await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
+
+      expect(fs.existsSync(path.join(keysDir, 'stage', 'id_stage.age'))).toBe(true);
+    });
+
+    it('reports which keys were not stored', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
+
+      expect(messages(errorSpy)).toContain('id_prod');
+      expect(messages(logSpy)).toContain('1 of 2 selected keys were not stored: id_prod');
+    });
+
+    it('leaves no vault entry for the key that failed', async () => {
+      await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
+
+      // Not even an empty directory: list counts a directory with an .age in it,
+      // and a truncated .age would be offered for decryption.
+      expect(fs.existsSync(path.join(keysDir, 'prod'))).toBe(false);
+    });
+  });
+
+  it('gives up immediately when age is not installed', async () => {
+    key(sshDir, 'id_prod', 'ssh');
+    key(sshDir, 'id_stage', 'ssh');
+    prompt.mockResolvedValue({ selectedKeys: ['id_prod', 'id_stage'] });
+    execa.mockImplementation(async () => {
+      throw Object.assign(new Error('spawn age ENOENT'), { code: 'ENOENT' });
+    });
+
+    // Not a per-key failure: nine more identical errors help nobody.
+    await expect(encryptKeys(sshDir, keysDir, tmpDir, PUBKEY)).rejects.toThrow(
+      '`age` was not found on PATH'
+    );
+    expect(execa).toHaveBeenCalledTimes(1);
+  });
 });

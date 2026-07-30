@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execa } from 'execa';
 import inquirer from 'inquirer';
+import { runTool } from './keyman.utils.js';
+import { storeInVault } from './keyman.vault.js';
 
 export async function generateKey(tmpDir: string, keysDir: string, pubkey: string) {
   const { algorithm } = await inquirer.prompt<{ algorithm: string }>([
@@ -23,15 +24,6 @@ export async function generateKey(tmpDir: string, keysDir: string, pubkey: strin
     },
   ]);
 
-  const { password } = await inquirer.prompt<{ password: string }>([
-    {
-      type: 'password',
-      name: 'password',
-      message: 'Enter passphrase (leave empty for no passphrase):',
-      mask: '*',
-    },
-  ]);
-
   const { identity } = await inquirer.prompt<{ identity: string }>([
     {
       type: 'input',
@@ -48,30 +40,31 @@ export async function generateKey(tmpDir: string, keysDir: string, pubkey: strin
     return;
   }
 
+  const args = ['-t', algorithm, '-f', keyPath, '-C', identity];
+  if (algorithm === 'rsa') {
+    args.push('-b', '4096');
+  }
+
   try {
     console.log(`Generating ${algorithm} key pair...`);
-    const args = ['-t', algorithm, '-f', keyPath, '-N', password, '-C', identity];
-
-    if (algorithm === 'rsa') {
-      args.push('-b', '4096');
-    }
-
-    await execa('ssh-keygen', args);
+    // No `-N`, and stdio inherited: ssh-keygen asks for the passphrase itself and
+    // confirms it. keyman used to prompt for it and pass it as `-N <value>`,
+    // which put the passphrase in this process's argv — readable by any user on
+    // the box via `ps` for as long as the spawn lived, and in keyman's memory
+    // before that. A passphrase keyman never learns cannot be leaked by keyman.
+    await runTool('ssh-keygen', args, { stdio: 'inherit' });
     console.log(`✅ Key generated: ${keyPath}`);
-
-    // Encrypt the key
-    const folderName = fileName.replace('id_', '');
-    const vaultPath = path.join(keysDir, folderName);
-    fs.mkdirSync(vaultPath, { recursive: true });
-
-    // Encrypt key using `age`
-    await execa('age', ['-r', pubkey, '-o', path.join(vaultPath, `${fileName}.age`), keyPath]);
-
-    // Copy public key
-    fs.copyFileSync(`${keyPath}.pub`, path.join(vaultPath, `${fileName}.pub`));
-
-    console.log(`🔒 Encrypted and stored: ${vaultPath}`);
   } catch (error) {
-    console.error(`❌ Error generating/encrypting key: ${error}`);
+    console.error(`❌ Error generating key: ${error instanceof Error ? error.message : error}`);
+    return;
+  }
+
+  try {
+    await storeInVault(keyPath, keysDir, pubkey);
+  } catch (error) {
+    // The private key is still in tmpDir, so this is recoverable by encrypting it
+    // — which is why it does not read as having lost the key.
+    console.error(`❌ Error encrypting key: ${error instanceof Error ? error.message : error}`);
+    console.error(`   ${keyPath} was generated; encrypt it once the problem is fixed.`);
   }
 }
