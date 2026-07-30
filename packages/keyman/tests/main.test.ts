@@ -172,27 +172,28 @@ describe('keyman', () => {
     expect(generateKey).toHaveBeenCalledWith(paths.tmpDir, paths.keysDir, 'age1recipient');
   });
 
-  it('encrypts keys into the vault root', async () => {
+  it('encrypts keys into the configured keys directory', async () => {
     menu(['encrypt']);
 
     await keyman();
 
     expect(encryptKeys).toHaveBeenCalledWith(
       path.join(process.env.HOME as string, '.ssh'),
-      paths.vaultRoot,
+      paths.keysDir,
       paths.tmpDir,
       'age1recipient'
     );
   });
 
-  it('decrypts keys using the age identity file', async () => {
+  it('decrypts from the configured keys directory using the age identity file', async () => {
     menu(['decrypt']);
 
     await keyman();
 
     expect(decryptKeys).toHaveBeenCalledWith(
       path.join(process.env.HOME as string, '.ssh'),
-      paths.vaultRoot,
+      paths.keysDir,
+      paths.tmpDir,
       paths.keyPath
     );
   });

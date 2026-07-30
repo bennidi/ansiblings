@@ -95,12 +95,12 @@ export async function keyman() {
       case 'encrypt': {
         const pubkey = await ageRecipient();
         if (pubkey) {
-          await encryptKeys(sshDir, paths.vaultRoot, paths.tmpDir, pubkey);
+          await encryptKeys(sshDir, paths.keysDir, paths.tmpDir, pubkey);
         }
         break;
       }
       case 'decrypt':
-        await decryptKeys(sshDir, paths.vaultRoot, paths.keyPath);
+        await decryptKeys(sshDir, paths.keysDir, paths.tmpDir, paths.keyPath);
         break;
       case 'quit':
         console.log('\n👋 Goodbye!\n');

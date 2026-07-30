@@ -3,7 +3,8 @@ import path from 'node:path';
 import inquirer from 'inquirer';
 import { runTool } from './keyman.utils.js';
 
-const LOCAL_MODE = 'Local (vault/tmp)';
+/** The two decryption targets. Values, so the label can name the real directory. */
+const LOCAL_MODE = 'local';
 
 interface DecryptPlan {
   key: string;
@@ -13,12 +14,13 @@ interface DecryptPlan {
   publicKeyOut: string;
 }
 
-export async function decryptKeys(sshDir: string, vaultDir: string, ageKey: string) {
-  const keyDir = path.join(vaultDir, 'keys');
+export async function decryptKeys(sshDir: string, keysDir: string, tmpDir: string, ageKey: string) {
   // Guarded: nothing creates the keys directory until the first encrypt, so on a
   // fresh vault this readdir threw instead of reporting an empty vault.
-  const vaultKeys = fs.existsSync(keyDir)
-    ? fs.readdirSync(keyDir).filter((key) => fs.existsSync(path.join(keyDir, key, `id_${key}.age`)))
+  const vaultKeys = fs.existsSync(keysDir)
+    ? fs
+        .readdirSync(keysDir)
+        .filter((key) => fs.existsSync(path.join(keysDir, key, `id_${key}.age`)))
     : [];
 
   if (vaultKeys.length === 0) {
@@ -37,16 +39,20 @@ export async function decryptKeys(sshDir: string, vaultDir: string, ageKey: stri
       type: 'list',
       name: 'decryptMode',
       message: 'Choose decryption location:',
-      choices: [LOCAL_MODE, 'SSH (~/.ssh)'],
+      // Named after the directories actually in use, which are configurable.
+      choices: [
+        { name: `Local (${tmpDir})`, value: LOCAL_MODE },
+        { name: `SSH (${sshDir})`, value: 'ssh' },
+      ],
     },
   ]);
 
-  const outDir = decryptMode === LOCAL_MODE ? path.join(vaultDir, 'tmp') : sshDir;
+  const outDir = decryptMode === LOCAL_MODE ? tmpDir : sshDir;
 
   const plans: DecryptPlan[] = selectedKeys.map((key: string) => ({
     key,
-    encryptedKey: path.join(keyDir, key, `id_${key}.age`),
-    publicKey: path.join(keyDir, key, `id_${key}.pub`),
+    encryptedKey: path.join(keysDir, key, `id_${key}.age`),
+    publicKey: path.join(keysDir, key, `id_${key}.pub`),
     privateKeyOut: path.join(outDir, `id_${key}`),
     publicKeyOut: path.join(outDir, `id_${key}.pub`),
   }));

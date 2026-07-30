@@ -19,14 +19,14 @@ vi.mock('inquirer', () => ({ default: { prompt } }));
 
 import { decryptKeys } from '../src/keyman.decrypt.js';
 
-const LOCAL = 'Local (vault/tmp)';
-const SSH = 'SSH (~/.ssh)';
+const LOCAL = 'local';
+const SSH = 'ssh';
 
 describe('decryptKeys', () => {
   let root: string;
   let sshDir: string;
   let vaultDir: string;
-  let keyDir: string;
+  let keysDir: string;
   let tmpDir: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
 
@@ -34,7 +34,7 @@ describe('decryptKeys', () => {
 
   /** Creates <vault>/keys/<name>/id_<name>.{age,pub}. */
   const vaultKey = (name: string) => {
-    const dir = path.join(keyDir, name);
+    const dir = path.join(keysDir, name);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `id_${name}.age`), `ENCRYPTED ${name}`);
     fs.writeFileSync(path.join(dir, `id_${name}.pub`), `PUBLIC ${name}`);
@@ -62,9 +62,9 @@ describe('decryptKeys', () => {
     root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'keyman-decrypt-')));
     sshDir = path.join(root, '.ssh');
     vaultDir = path.join(root, 'vault');
-    keyDir = path.join(vaultDir, 'keys');
+    keysDir = path.join(vaultDir, 'keys');
     tmpDir = path.join(vaultDir, 'tmp');
-    fs.mkdirSync(keyDir, { recursive: true });
+    fs.mkdirSync(keysDir, { recursive: true });
     fs.mkdirSync(sshDir, { recursive: true });
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -83,16 +83,16 @@ describe('decryptKeys', () => {
   });
 
   it('warns when the vault holds no encrypted keys', async () => {
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     expect(messages(logSpy)).toContain('No encrypted keys found.');
     expect(prompt).not.toHaveBeenCalled();
   });
 
   it('warns instead of throwing when the vault has no keys directory', async () => {
-    fs.rmSync(keyDir, { recursive: true });
+    fs.rmSync(keysDir, { recursive: true });
 
-    await expect(decryptKeys(sshDir, vaultDir, AGE_KEY)).resolves.toBeUndefined();
+    await expect(decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY)).resolves.toBeUndefined();
     expect(messages(logSpy)).toContain('No encrypted keys found.');
   });
 
@@ -103,18 +103,18 @@ describe('decryptKeys', () => {
       throw Object.assign(new Error('spawn age ENOENT'), { code: 'ENOENT' });
     });
 
-    await expect(decryptKeys(sshDir, vaultDir, AGE_KEY)).rejects.toThrow(
+    await expect(decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY)).rejects.toThrow(
       '`age` was not found on PATH'
     );
   });
 
   it('offers only directories that actually contain an encrypted key', async () => {
     vaultKey('prod');
-    fs.mkdirSync(path.join(keyDir, 'empty'), { recursive: true });
-    fs.writeFileSync(path.join(keyDir, 'README.md'), '');
+    fs.mkdirSync(path.join(keysDir, 'empty'), { recursive: true });
+    fs.writeFileSync(path.join(keysDir, 'README.md'), '');
     answers([]);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     expect(choices()).toEqual(['prod']);
   });
@@ -123,7 +123,7 @@ describe('decryptKeys', () => {
     vaultKey('prod');
     answers(['prod']);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     const out = path.join(tmpDir, 'id_prod');
     expect(argsOf('age')).toEqual([
@@ -132,7 +132,7 @@ describe('decryptKeys', () => {
       AGE_KEY,
       '-o',
       out,
-      path.join(keyDir, 'prod', 'id_prod.age'),
+      path.join(keysDir, 'prod', 'id_prod.age'),
     ]);
     expect(fs.readFileSync(out, 'utf-8')).toBe('PLAINTEXT');
     expect(fs.readFileSync(`${out}.pub`, 'utf-8')).toBe('PUBLIC prod');
@@ -143,7 +143,7 @@ describe('decryptKeys', () => {
     vaultKey('prod');
     answers(['prod'], SSH);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     const out = path.join(sshDir, 'id_prod');
     expect(argsOf('age')?.[4]).toBe(out);
@@ -155,7 +155,7 @@ describe('decryptKeys', () => {
     vaultKey('prod');
     answers(['prod'], SSH);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     expect(modeOf(sshDir)).toBe(0o700);
     expect(fs.existsSync(path.join(sshDir, 'id_prod'))).toBe(true);
@@ -165,7 +165,7 @@ describe('decryptKeys', () => {
     vaultKey('prod');
     answers(['prod']);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     expect(modeOf(path.join(tmpDir, 'id_prod'))).toBe(0o600);
   });
@@ -175,7 +175,7 @@ describe('decryptKeys', () => {
     vaultKey('stage');
     answers(['prod', 'stage']);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     // One age per key: the cp and chmod spawns are gone.
     expect(execa).toHaveBeenCalledTimes(2);
@@ -186,17 +186,17 @@ describe('decryptKeys', () => {
     vaultKey('prod');
     answers([]);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     expect(execa).not.toHaveBeenCalled();
   });
 
   it('writes the private key even when the vault entry has no public key', async () => {
     vaultKey('prod');
-    fs.rmSync(path.join(keyDir, 'prod', 'id_prod.pub'));
+    fs.rmSync(path.join(keysDir, 'prod', 'id_prod.pub'));
     answers(['prod']);
 
-    await decryptKeys(sshDir, vaultDir, AGE_KEY);
+    await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
     expect(fs.existsSync(path.join(tmpDir, 'id_prod'))).toBe(true);
     expect(messages(logSpy)).toContain('has no public key in the vault');
@@ -214,7 +214,7 @@ describe('decryptKeys', () => {
       const target = existing(tmpDir);
       answers(['prod']);
 
-      await decryptKeys(sshDir, vaultDir, AGE_KEY);
+      await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
       expect(fs.readFileSync(target, 'utf-8')).toBe('PRECIOUS EXISTING KEY');
       expect(execa).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe('decryptKeys', () => {
       existing(tmpDir);
       answers(['prod']);
 
-      await decryptKeys(sshDir, vaultDir, AGE_KEY);
+      await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
       const confirm = prompt.mock.calls.at(-1)?.[0][0];
       expect(confirm).toMatchObject({ type: 'confirm', default: false });
@@ -238,7 +238,7 @@ describe('decryptKeys', () => {
       const target = existing(tmpDir);
       answers(['prod'], LOCAL, true);
 
-      await decryptKeys(sshDir, vaultDir, AGE_KEY);
+      await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
       expect(fs.readFileSync(target, 'utf-8')).toBe('PLAINTEXT');
     });
@@ -248,7 +248,7 @@ describe('decryptKeys', () => {
       existing(tmpDir, 'id_prod.pub');
       answers(['prod']);
 
-      await decryptKeys(sshDir, vaultDir, AGE_KEY);
+      await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
       expect(execa).not.toHaveBeenCalled();
       expect(prompt.mock.calls.at(-1)?.[0][0].message).toContain('id_prod.pub');
@@ -259,7 +259,7 @@ describe('decryptKeys', () => {
       const target = existing(sshDir);
       answers(['prod'], SSH);
 
-      await decryptKeys(sshDir, vaultDir, AGE_KEY);
+      await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
       expect(fs.readFileSync(target, 'utf-8')).toBe('PRECIOUS EXISTING KEY');
     });
@@ -270,7 +270,7 @@ describe('decryptKeys', () => {
       existing(tmpDir);
       answers(['prod', 'stage']);
 
-      await decryptKeys(sshDir, vaultDir, AGE_KEY);
+      await decryptKeys(sshDir, keysDir, tmpDir, AGE_KEY);
 
       // stage is written, prod is kept — and the question about prod was asked
       // before either was touched.

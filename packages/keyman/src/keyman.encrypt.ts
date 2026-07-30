@@ -16,12 +16,7 @@ function privateKeysIn(dir: string): string[] {
   return fs.readdirSync(dir).filter((key) => key.startsWith('id_') && !key.endsWith('.pub'));
 }
 
-export async function encryptKeys(
-  sshDir: string,
-  vaultDir: string,
-  tmpDir: string,
-  pubkey: string
-) {
+export async function encryptKeys(sshDir: string, keysDir: string, tmpDir: string, pubkey: string) {
   const sshKeys = privateKeysIn(sshDir);
   const tmpKeys = privateKeysIn(tmpDir);
   const keys = [...new Set([...sshKeys, ...tmpKeys])];
@@ -42,7 +37,7 @@ export async function encryptKeys(
 
   for (const key of selectedKeys) {
     const keyPath = path.join(tmpKeys.includes(key) ? tmpDir : sshDir, key);
-    const vaultPath = path.join(vaultDir, 'keys', key.replace('id_', ''));
+    const vaultPath = path.join(keysDir, key.replace('id_', ''));
     fs.mkdirSync(vaultPath, { recursive: true, mode: 0o700 });
 
     // Encrypt key using `age`

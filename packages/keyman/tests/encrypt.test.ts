@@ -20,7 +20,7 @@ import { encryptKeys } from '../src/keyman.encrypt.js';
 describe('encryptKeys', () => {
   let root: string;
   let sshDir: string;
-  let vaultDir: string;
+  let keysDir: string;
   let tmpDir: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
 
@@ -41,7 +41,7 @@ describe('encryptKeys', () => {
     vi.clearAllMocks();
     root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'keyman-encrypt-')));
     sshDir = path.join(root, '.ssh');
-    vaultDir = path.join(root, 'vault');
+    keysDir = path.join(root, 'vault', 'keys');
     tmpDir = path.join(root, 'vault', 'tmp');
     fs.mkdirSync(sshDir, { recursive: true });
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -60,7 +60,7 @@ describe('encryptKeys', () => {
   });
 
   it('warns when there is nothing to encrypt', async () => {
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
     expect(messages(logSpy)).toContain('No private SSH keys found to encrypt.');
     expect(prompt).not.toHaveBeenCalled();
@@ -69,7 +69,7 @@ describe('encryptKeys', () => {
   it('warns instead of throwing when the .ssh directory does not exist', async () => {
     fs.rmSync(sshDir, { recursive: true });
 
-    await expect(encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY)).resolves.toBeUndefined();
+    await expect(encryptKeys(sshDir, keysDir, tmpDir, PUBKEY)).resolves.toBeUndefined();
     expect(messages(logSpy)).toContain('No private SSH keys found to encrypt.');
   });
 
@@ -78,7 +78,7 @@ describe('encryptKeys', () => {
     key(sshDir, 'id_prod', 'ssh');
     prompt.mockResolvedValue({ selectedKeys: [] });
 
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
     expect(choices()).toEqual(['id_prod']);
   });
@@ -88,7 +88,7 @@ describe('encryptKeys', () => {
     prompt.mockResolvedValue({ selectedKeys: ['id_prod'] });
     execa.mockRejectedValue(Object.assign(new Error('spawn age ENOENT'), { code: 'ENOENT' }));
 
-    await expect(encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY)).rejects.toThrow(
+    await expect(encryptKeys(sshDir, keysDir, tmpDir, PUBKEY)).rejects.toThrow(
       '`age` was not found on PATH'
     );
   });
@@ -97,7 +97,7 @@ describe('encryptKeys', () => {
     fs.writeFileSync(path.join(sshDir, 'known_hosts'), '');
     fs.writeFileSync(path.join(sshDir, 'id_orphan.pub'), 'PUBLIC');
 
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
     expect(messages(logSpy)).toContain('No private SSH keys found to encrypt.');
   });
@@ -108,7 +108,7 @@ describe('encryptKeys', () => {
     key(tmpDir, 'id_stage', 'tmp');
     prompt.mockResolvedValue({ selectedKeys: [] });
 
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
     expect(choices()).toEqual(['id_prod', 'id_stage']);
   });
@@ -117,9 +117,9 @@ describe('encryptKeys', () => {
     key(sshDir, 'id_prod', 'ssh');
     prompt.mockResolvedValue({ selectedKeys: ['id_prod'] });
 
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
-    const vaultPath = path.join(vaultDir, 'keys', 'prod');
+    const vaultPath = path.join(keysDir, 'prod');
     expect(execa).toHaveBeenCalledWith('age', [
       '-r',
       PUBKEY,
@@ -136,12 +136,10 @@ describe('encryptKeys', () => {
     key(tmpDir, 'id_prod', 'tmp');
     prompt.mockResolvedValue({ selectedKeys: ['id_prod'] });
 
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
     expect(execa.mock.calls[0][1]).toContain(path.join(tmpDir, 'id_prod'));
-    expect(fs.readFileSync(path.join(vaultDir, 'keys', 'prod', 'id_prod.pub'), 'utf-8')).toBe(
-      'PUBLIC tmp'
-    );
+    expect(fs.readFileSync(path.join(keysDir, 'prod', 'id_prod.pub'), 'utf-8')).toBe('PUBLIC tmp');
   });
 
   it('encrypts every selected key', async () => {
@@ -149,20 +147,20 @@ describe('encryptKeys', () => {
     key(sshDir, 'id_stage', 'ssh');
     prompt.mockResolvedValue({ selectedKeys: ['id_prod', 'id_stage'] });
 
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
     expect(execa).toHaveBeenCalledTimes(2);
-    expect(fs.existsSync(path.join(vaultDir, 'keys', 'prod', 'id_prod.age'))).toBe(true);
-    expect(fs.existsSync(path.join(vaultDir, 'keys', 'stage', 'id_stage.age'))).toBe(true);
+    expect(fs.existsSync(path.join(keysDir, 'prod', 'id_prod.age'))).toBe(true);
+    expect(fs.existsSync(path.join(keysDir, 'stage', 'id_stage.age'))).toBe(true);
   });
 
   it('does nothing when the selection is empty', async () => {
     key(sshDir, 'id_prod', 'ssh');
     prompt.mockResolvedValue({ selectedKeys: [] });
 
-    await encryptKeys(sshDir, vaultDir, tmpDir, PUBKEY);
+    await encryptKeys(sshDir, keysDir, tmpDir, PUBKEY);
 
     expect(execa).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(vaultDir, 'keys'))).toBe(false);
+    expect(fs.existsSync(keysDir)).toBe(false);
   });
 });
