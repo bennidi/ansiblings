@@ -3,6 +3,27 @@ import path from 'node:path';
 import { runTool } from './keyman.utils.js';
 
 /**
+ * The vault entries that hold an encrypted key, sorted.
+ *
+ * A directory counts as an entry when it holds `id_<dir>.age` — the layout
+ * `storeInVault` writes and `decrypt` reads back — which is what keeps a stray
+ * file, or a directory whose encryption failed, out of every menu built from this.
+ * Sorted because the order otherwise comes from the filesystem.
+ */
+export function listVaultKeys(keysDir: string): string[] {
+  // Nothing creates the keys directory until the first encrypt, so on a fresh
+  // vault this readdir threw instead of reporting an empty one.
+  if (!fs.existsSync(keysDir)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(keysDir)
+    .filter((key) => fs.existsSync(path.join(keysDir, key, `id_${key}.age`)))
+    .sort();
+}
+
+/**
  * The public half of a private key, derived if the sibling file is missing.
  *
  * `encrypt` builds its selection list from private keys only, so a key whose

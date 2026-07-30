@@ -19,6 +19,8 @@ const {
   generateKey,
   encryptKeys,
   decryptKeys,
+  rotateKey,
+  retireKey,
   extractAgePublicKey,
 } = vi.hoisted(() => ({
   prompt: vi.fn(),
@@ -29,6 +31,8 @@ const {
   generateKey: vi.fn(),
   encryptKeys: vi.fn(),
   decryptKeys: vi.fn(),
+  rotateKey: vi.fn(),
+  retireKey: vi.fn(),
   extractAgePublicKey: vi.fn(),
 }));
 
@@ -39,6 +43,7 @@ vi.mock('../src/keyman.copy.js', () => ({ copyKey }));
 vi.mock('../src/keyman.generate.js', () => ({ generateKey }));
 vi.mock('../src/keyman.encrypt.js', () => ({ encryptKeys }));
 vi.mock('../src/keyman.decrypt.js', () => ({ decryptKeys }));
+vi.mock('../src/keyman.rotate.js', () => ({ rotateKey, retireKey }));
 vi.mock('../src/keyman.utils.js', () => ({ extractAgePublicKey }));
 
 import { keyman } from '../src/keyman.main.js';
@@ -136,6 +141,8 @@ describe('keyman', () => {
       'generate',
       'encrypt',
       'decrypt',
+      'rotate',
+      'retire',
       'clear',
       'quit',
     ]);
@@ -199,6 +206,33 @@ describe('keyman', () => {
     );
   });
 
+  it('rotates a key with the age recipient, against the same directories', async () => {
+    menu(['rotate']);
+
+    await keyman();
+
+    expect(rotateKey).toHaveBeenCalledWith(
+      path.join(process.env.HOME as string, '.ssh'),
+      paths.keysDir,
+      paths.tmpDir,
+      'age1recipient'
+    );
+  });
+
+  it('retires a key without needing a recipient', async () => {
+    menu(['retire']);
+
+    await keyman();
+
+    expect(retireKey).toHaveBeenCalledWith(
+      path.join(process.env.HOME as string, '.ssh'),
+      paths.keysDir,
+      paths.tmpDir
+    );
+    // Retiring only deletes, so it works with no age identity at all.
+    expect(extractAgePublicKey).not.toHaveBeenCalled();
+  });
+
   describe('without an age recipient', () => {
     beforeEach(() => {
       extractAgePublicKey.mockResolvedValue(null);
@@ -207,6 +241,7 @@ describe('keyman', () => {
     it.each([
       ['generate', generateKey],
       ['encrypt', encryptKeys],
+      ['rotate', rotateKey],
     ])('refuses %s with a remedy instead of passing null to age', async (choice, operation) => {
       menu([choice]);
 
@@ -220,12 +255,13 @@ describe('keyman', () => {
     });
 
     it('still allows the operations that need no recipient', async () => {
-      menu(['list', 'decrypt']);
+      menu(['list', 'decrypt', 'retire']);
 
       await keyman();
 
       expect(listKeys).toHaveBeenCalled();
       expect(decryptKeys).toHaveBeenCalled();
+      expect(retireKey).toHaveBeenCalled();
     });
 
     it('retries the lookup, so creating the identity mid-session works', async () => {

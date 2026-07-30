@@ -15,7 +15,52 @@ const { execa } = vi.hoisted(() => ({ execa: vi.fn() }));
 
 vi.mock('execa', () => ({ execa }));
 
-import { storeInVault } from '../src/keyman.vault.js';
+import { listVaultKeys, storeInVault } from '../src/keyman.vault.js';
+
+describe('listVaultKeys', () => {
+  let keysDir: string;
+
+  const entry = (name: string, file = `id_${name}.age`) => {
+    fs.mkdirSync(path.join(keysDir, name), { recursive: true });
+    fs.writeFileSync(path.join(keysDir, name, file), 'ENCRYPTED');
+  };
+
+  beforeEach(() => {
+    keysDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'keyman-vaultlist-')));
+  });
+
+  afterEach(() => {
+    fs.rmSync(keysDir, { recursive: true, force: true });
+  });
+
+  it('is empty for a keys directory that was never created', () => {
+    expect(listVaultKeys(path.join(keysDir, 'nope'))).toEqual([]);
+  });
+
+  it('sorts the entries rather than taking the filesystem order', () => {
+    for (const name of ['stage', 'alpha', 'prod']) {
+      entry(name);
+    }
+
+    expect(listVaultKeys(keysDir)).toEqual(['alpha', 'prod', 'stage']);
+  });
+
+  it('ignores a directory with no encrypted key in it', () => {
+    entry('prod');
+    // The shape a failed encryption used to leave behind, and a plain mistake.
+    fs.mkdirSync(path.join(keysDir, 'empty'));
+    entry('notes', 'README.md');
+
+    expect(listVaultKeys(keysDir)).toEqual(['prod']);
+  });
+
+  it('ignores a loose file', () => {
+    entry('prod');
+    fs.writeFileSync(path.join(keysDir, 'id_stage.age'), 'ENCRYPTED');
+
+    expect(listVaultKeys(keysDir)).toEqual(['prod']);
+  });
+});
 
 describe('storeInVault', () => {
   let root: string;

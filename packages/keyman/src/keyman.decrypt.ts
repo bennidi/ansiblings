@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import inquirer from 'inquirer';
 import { runTool } from './keyman.utils.js';
+import { listVaultKeys } from './keyman.vault.js';
 
 /** The two decryption targets. Values, so the label can name the real directory. */
 const LOCAL_MODE = 'local';
@@ -15,13 +16,7 @@ interface DecryptPlan {
 }
 
 export async function decryptKeys(sshDir: string, keysDir: string, tmpDir: string, ageKey: string) {
-  // Guarded: nothing creates the keys directory until the first encrypt, so on a
-  // fresh vault this readdir threw instead of reporting an empty vault.
-  const vaultKeys = fs.existsSync(keysDir)
-    ? fs
-        .readdirSync(keysDir)
-        .filter((key) => fs.existsSync(path.join(keysDir, key, `id_${key}.age`)))
-    : [];
+  const vaultKeys = listVaultKeys(keysDir);
 
   if (vaultKeys.length === 0) {
     console.log('⚠️ No encrypted keys found.');

@@ -9,6 +9,7 @@ import { encryptKeys } from './keyman.encrypt.js';
 import { generateKey } from './keyman.generate.js';
 import { CURRENT_USER, resolveHomeDir } from './keyman.home.js';
 import { listKeys } from './keyman.list.js';
+import { retireKey, rotateKey } from './keyman.rotate.js';
 import { extractAgePublicKey } from './keyman.utils.js';
 
 // 🔹 Main function to resolve paths and manage flow
@@ -75,6 +76,8 @@ export async function keyman() {
           { name: '🆕 Generate key', value: 'generate' },
           { name: '🔒 Encrypt keys', value: 'encrypt' },
           { name: '🔓 Decrypt keys', value: 'decrypt' },
+          { name: '🔄 Rotate key', value: 'rotate' },
+          { name: '🗑️  Retire key', value: 'retire' },
           { name: '🧹 Clear decrypted keys', value: 'clear' },
           { name: '❌ Quit', value: 'quit' },
         ],
@@ -104,6 +107,16 @@ export async function keyman() {
       }
       case 'decrypt':
         await decryptKeys(sshDir, paths.keysDir, paths.tmpDir, paths.keyPath);
+        break;
+      case 'rotate': {
+        const pubkey = await ageRecipient();
+        if (pubkey) {
+          await rotateKey(sshDir, paths.keysDir, paths.tmpDir, pubkey);
+        }
+        break;
+      }
+      case 'retire':
+        await retireKey(sshDir, paths.keysDir, paths.tmpDir);
         break;
       case 'clear':
         await clearDecryptedKeys(paths.tmpDir);
