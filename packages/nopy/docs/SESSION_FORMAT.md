@@ -2,9 +2,14 @@
 
 Nopy supports two session file formats: **JSON** and **MJS** (ES Module JavaScript).
 
+The extension is what picks the loader, so a session file has to end in `.json`
+or `.mjs`; anything else is refused by name. The `.nopysession.*` names used
+throughout are the convention `listSessions()` looks for — `-s` and `-l` accept
+any path you give them.
+
 ## Supported Formats
 
-### JSON Format (`.session.json`)
+### JSON Format (`.nopysession.json`)
 
 Traditional JSON format for session files:
 
@@ -35,7 +40,7 @@ Traditional JSON format for session files:
 - Cannot use dynamic values or computation
 - No code reuse or imports
 
-### MJS Format (`.session.mjs`) - **Recommended**
+### MJS Format (`.nopysession.mjs`) - **Recommended**
 
 JavaScript module format with full ES Module support:
 
@@ -172,7 +177,7 @@ export const commonCubes = [
 ];
 ```
 
-**my-session.session.mjs:**
+**my-session.nopysession.mjs:**
 ```javascript
 import { productionHosts, commonCubes } from './common-config.mjs';
 
@@ -232,7 +237,7 @@ function generateSession(config) {
   };
 
   const content = `export default ${JSON.stringify(session, null, 2)};`;
-  fs.writeFileSync('generated.session.mjs', content);
+  fs.writeFileSync('generated.nopysession.mjs', content);
 }
 
 // Generate from external configuration
@@ -255,10 +260,10 @@ Both formats are loaded the same way:
 import { loadSession } from '@bitsquare/nopy';
 
 // Load JSON
-const jsonSession = await loadSession('./my-session.session.json');
+const jsonSession = await loadSession('./my-session.nopysession.json');
 
 // Load MJS
-const mjsSession = await loadSession('./my-session.session.mjs');
+const mjsSession = await loadSession('./my-session.nopysession.mjs');
 ```
 
 The file extension determines which loader to use.
@@ -267,7 +272,7 @@ The file extension determines which loader to use.
 
 To convert an existing JSON session to MJS:
 
-1. Rename the file from `.session.json` to `.session.mjs`
+1. Rename the file from `.nopysession.json` to `.nopysession.mjs`
 2. Add `export default` before the configuration object
 3. Remove quotes from property keys (optional)
 4. Add comments and dynamic values as needed
@@ -304,11 +309,12 @@ Both formats must export/contain an object with this structure:
 
 ```typescript
 interface NopySession {
-  version: string;              // Session format version
-  timestamp: string;            // ISO timestamp
-  cubes: CubeSession[];        // Array of cube configurations
-  hosts: string[];             // Target hosts
-  auth: AuthSession;           // Authentication configuration
+  cubes: CubeSession[];        // Array of cube configurations — required
+  auth: AuthSession;           // Authentication configuration — required
+  version?: string;            // Session format version, currently "1.0.0"
+  timestamp?: string;          // ISO timestamp
+  name?: string;               // One-line description
+  hosts?: string[];            // Target hosts
   env?: Record<string, any>;   // Global environment variables
 }
 
@@ -322,6 +328,17 @@ interface AuthSession {
   username?: string;
 }
 ```
+
+Only `cubes` and `auth` are demanded of a session being *read* — the loader
+requires what it cannot work without and nothing else, so the sessions in these
+examples are all valid, and one written before `version` existed still loads. A
+session nopy *writes* always carries `version`, `timestamp` and `name`; a
+`version` this build does not recognise produces a warning on stderr and loads
+anyway.
+
+`method: 'ssh'` is the third value and the one no prompt produces: it means the
+connector handles authentication and nopy supplies no credential. Every
+`@vagrant/` and `@docker/` host gets it.
 
 A session nopy *writes* holds, per cube, every value that cube ran with — what
 was typed, what came from `.nopyrc.json`, what a dependency supplied, and what

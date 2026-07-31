@@ -137,6 +137,7 @@ class Cube<Schema extends AnyObjectSchema = AnyObjectSchema> {
   get secrets(): string[];   // manifest.secrets ?? []
 
   getDefaults(): z.infer<Schema>;
+  schemaKeys(): string[];
   requiredKeys(): string[];
   isSecret(key: string): boolean;
 }
@@ -150,6 +151,11 @@ single required field used to leave the cube with no variables at all.
 `requiredKeys()` returns the keys nothing can fill in on its own: no `.default()`
 and not optional. A `--use-defaults` run that cannot supply one aborts by name
 rather than deploying the cube with the value missing.
+
+`schemaKeys()` returns every declared key, required or not. It answers a
+different question — whether the cube *claims to know about* a key, rather than
+whether it has a value for one — and that is what decides whether a secret in the
+config `env` is allowed to reach it.
 
 ### `CubeSource`
 
@@ -264,13 +270,12 @@ const result = await nopy({ useDefaults: true, dryRun: true });
 |------|------|---------|-------------|
 | `useDefaults` | `boolean` | `false` | Skip the variable prompts. A cube with a required key nothing supplied aborts the run by name. |
 | `useAuthKey` | `boolean` | `false` | Force SSH key auth, skipping the auth prompt. |
-| `saveSession` | `string` | – | Path to write the session to. **Ignored during a replay.** |
+| `saveSession` | `string` | – | Path to write the session to. Honoured on a replay too. |
 | `loadSession` | `string` | – | Path to a session file to replay. |
 | `replaySession` | `NopySession` | – | A session object to replay, used by `-R` / `-H` from history. Takes precedence over `loadSession`. |
 | `dryRun` | `boolean` | `false` | Print the execution plan instead of running it. |
 | `printOnly` | `boolean` | `false` | Print the built pyinfra commands and return; the executor is never reached. |
 | `continueOnError` | `boolean` | `false` | Keep going after a cube fails. |
-| `jsonOutput` | `boolean` | `false` | Suppress the config banner and progress lines. See [Known gaps](#known-gaps). |
 | `saveToHistory` | `boolean` | `true` | Record the session in `.nopy.history.json`. |
 
 **Returns:** `Promise<NopyResult | undefined>` — `undefined` when cube loading
@@ -507,9 +512,10 @@ displaced stays visible underneath. The trace is never persisted.
 
 ```typescript
 class Variables {
-  constructor(env?: TVariables);
+  constructor(env?: TVariables, globalSecrets?: Iterable<string>);
 
   declareSecrets(cube: string, keys: readonly string[]): void;
+  declareSchema(cube: string, keys: readonly string[]): void;
   isSecret(cube: string, name: string): boolean;
 
   assign(cube: string, origin: Origin, values?: TVariables): void;
@@ -526,6 +532,25 @@ const MASK = '********';
 
 `declareSecrets()` is retroactive as well as prospective, so it does not matter
 whether the caller declares before or after the values arrive.
+
+`globalSecrets` is every key *any* manifest declares secret, plus the config's
+own `secrets` list. `nopy()` computes it once after `loadCubes()`, before the
+first cube resolves, so resolution order cannot change whether a value is treated
+as a credential. It does two things:
+
+- `isSecret()` is true for such a key on **every** cube, so a manifest that lists
+  `PASSWORD` in `schema` and forgets it in `secrets` still gets masking and still
+  keeps the value out of the session.
+- The config `env` stops being broadcast for it. Ordinary `env` keys are seeded
+  onto every cube — deliberately, since a cube may read a key off `host.data`
+  that it never declared — but a secret reaches only the cubes whose
+  `schemaKeys()` include it.
+
+`declareSchema()` is what supplies those keys, and it has an ordering
+requirement: call it before anything assigns to the cube, because the first
+assignment is what seeds `env`. `BuildContext.resolveCube` calls it immediately
+after `declareSecrets()`. It deliberately does not create the cube's bucket
+itself.
 
 `persistable()` leaves a secret out entirely rather than masking it, so a replay
 sees it as absent and asks for it again. That is why replaying a session whose
@@ -585,15 +610,16 @@ const results = await executeDeployCalls(calls, {
 });
 ```
 
-### `outputExecutionPlan(calls, asJson?)`
+### `outputExecutionPlan(calls)`
 
 ```typescript
-outputExecutionPlan(deployCalls);       // text
-outputExecutionPlan(deployCalls, true); // JSON
+outputExecutionPlan(deployCalls);
 ```
 
-Both forms mask secrets. Note that `executeDeployCalls` calls this without the
-second argument, so `--dry-run --json` prints the text plan.
+Prints the plan a `--dry-run` shows, with secrets masked. Went from
+`(calls, asJson?)` to `(calls)` when `--json` was removed; the JSON branch was
+unreachable from the CLI, since `executeDeployCalls` never passed the second
+argument.
 
 ### `maskCommand(call)` / `maskVariables(call)`
 
@@ -641,7 +667,7 @@ interface WorkflowResult {
   authMethod: string;
   username?: string;
   password?: string;
-  isReplay: boolean;
+  replaySource?: 'file' | 'history';   // undefined on a fresh interactive run
 }
 
 interface WorkflowOptions {
@@ -673,10 +699,12 @@ The same, from a session object rather than a path — the `-R` / `-H` path.
 
 ```typescript
 interface NopySession {
+  cubes: CubeSession[];     // required
+  auth: AuthSession;        // required
+  version?: string;
+  timestamp?: string;       // ISO 8601
   name?: string;
-  cubes: CubeSession[];
   hosts?: string[];
-  auth: AuthSession;
   env?: TVariables;
 }
 
@@ -692,7 +720,10 @@ interface AuthSession {
 }
 ```
 
-There is no `version` or `timestamp` field, and nothing validates compatibility.
+`version` and `timestamp` are stamped on every session nopy writes and demanded
+of none it reads — an older file, or a hand-written one, simply lacks them.
+Nothing validates compatibility beyond a warning on an unrecognised `version`;
+the constant is exported as `SESSION_VERSION`.
 
 A `CubeSession` records every value the cube settled on, whatever its origin —
 not just the prompted ones — minus anything the manifest declared a secret. So a
@@ -702,8 +733,7 @@ and `env` happen to say later.
 
 ### `saveSession(session, filePath)`
 
-Writes JSON, creating the directory if needed. Note that `nopy()` skips this
-during a replay.
+Writes JSON, creating the directory if needed.
 
 ### `loadSession(filePath)`
 
@@ -713,7 +743,8 @@ const session = await loadSession('./deployment.session.mjs');  // default expor
 ```
 
 Dispatches on the extension; `.json` and `.mjs` only. Validates that `cubes` is
-an array, that `hosts` (if present) is an array, and that `auth` exists.
+an array, that `hosts` (if present) is an array, and that `auth` exists. A
+`version` other than `SESSION_VERSION` warns on stderr and loads anyway.
 
 ### `createSession(params)`
 
@@ -725,18 +756,27 @@ const session = createSession({
 });
 ```
 
+Stamps `version` and `timestamp`; pass `timestamp` to override the latter. It
+does not derive a `name` — that needs the resolved cube list, which does not
+exist yet at the point the session is created, so `nopy()` fills it in at save
+time.
+
+### `describeSession(session, timestamp)`
+
+The one-line `date - cubes → hosts` description, shared with the history list so
+that the two cannot drift.
+
 ### `listSessions(dirPath?)`
 
-Non-recursive; matches **`*.session.json`** and **`*.session.mjs`** only.
-A file named `deploy.nopysession.json` will not be listed, though `loadSession`
-reads it fine.
+Non-recursive; matches `*.nopysession.json`, `*.nopysession.mjs`,
+`*.session.json` and `*.session.mjs`.
 
 ---
 
 ## History Module
 
-Sessions are recorded automatically after a successful non-replay run, into
-`.nopy.history.json` in the working directory.
+Sessions are recorded automatically, into `.nopy.history.json` in the working
+directory, before the deploy commands run — so a failed run is recorded too.
 
 ```typescript
 const HISTORY_FILE = '.nopy.history.json';
@@ -767,8 +807,10 @@ interface SessionHistory {
 | `removeFromHistory(id)` | `boolean` | `false` if the id was not found |
 | `formatHistoryList(entries)` | `string` | what `nopy history` prints |
 
-Recording is suppressed for a dry run, a replay, a run that built no deploy
-calls, `--no-history`, and `history.autoSave: false` in the config.
+Recording is suppressed for a dry run, a print-only run, a `-R`/`-H` replay out
+of history, a run that built no deploy calls, `--no-history`, and
+`history.autoSave: false` in the config. A `--load-session` run **is** recorded: it is not in history already, and
+without the entry `-R` would have nothing to repeat.
 
 ---
 
@@ -785,6 +827,7 @@ interface NopyConfig {
   cubeDirs: string[];
   cubePackages: CubePackageRef[];
   env: TVariables;
+  secrets?: string[];     // env keys to treat as sensitive that no manifest declares
   log?: LogConfig;
   history?: HistoryConfig;
   execution?: ExecutionConfig;
@@ -1031,7 +1074,7 @@ on `PATH`.
 **never throws** — it sits in front of every command the user actually asked
 for. Returns `null` immediately when `isUpdateCheckDisabled(env)`:
 `NOPY_NO_UPDATE_CHECK` set to anything but `0`/`false`, or `CI` set at all. The
-CLI prints it to **stderr**, so `--json` and piped stdout stay clean.
+CLI prints it to **stderr**, so a piped `--print-only` stays clean.
 
 ### `selfUpdate(options)` → `SelfUpdateResult`
 
@@ -1062,7 +1105,6 @@ nopy install -l ./sess.json   # replay a session file
 nopy install -n               # dry run — print the plan, execute nothing
 nopy install -P               # print the built pyinfra commands and exit
 nopy install -c               # continue after a failure
-nopy install -j               # JSON output
 nopy install --no-history     # do not record this run
 
 nopy history                  # list recorded sessions (alias: h; -j for JSON)
@@ -1167,17 +1209,15 @@ Real behaviour that a reader would otherwise take on trust. Tracked in
 - **`logConfigToFlags()` is never consumed.** It is exported and unit-tested, but
   nothing feeds its output into the built pyinfra command, so `log.verbosity` and
   `log.debug` in `.nopyrc.json` have no effect today.
-- **`--json` emits nothing on success.** `jsonOutput` suppresses the banner and
-  the progress lines, and prints `{success: false, errors}` when cube *loading*
-  fails. The success path returns `NopyResult` to the caller without printing it,
-  so a CI job gets pyinfra's inherited stdio and an exit code. `--dry-run --json`
-  prints the *text* plan.
 - **No cycle detection.** Ordering is a side effect of recursion, not a
   topological sort. Two mutually dependent cubes overflow the stack.
 - **`DeployCall.dependencies` is always `[]`.** The field is populated nowhere;
   dependency information lives in the emission order.
 - **`ExecutionResult.stdout` / `.stderr` are always `undefined`,** because the
-  executor inherits stdio rather than capturing it.
+  executor inherits stdio rather than capturing it. This is also why `install`
+  has no `--json`: during a run nopy does not own its own stdout, so there is no
+  stream to put a machine-readable answer on. Use `--print-only` for the plan and
+  the exit code for the verdict.
 - **Hook variables are not schema-validated.** The second argument to a hook is
   the effective values as collected. `schema.parse()` runs in exactly one place —
   `Cube.getDefaults()`, against `{}` — and prompt input is type-coerced, which is

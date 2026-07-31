@@ -129,10 +129,15 @@ describe('BuildContext session replay', () => {
 });
 
 describe('BuildContext replay gaps', () => {
-  const replay = (cube: Cube, recorded: Record<string, string> = {}, options = {}) =>
+  const replay = (
+    cube: Cube,
+    recorded: Record<string, string> = {},
+    options = {},
+    variables = new Variables()
+  ) =>
     new BuildContext(
       { [cube.id]: cube },
-      new Variables(),
+      variables,
       session([{ key: cube.id, variables: recorded }]),
       config,
       { method: 'ssh' },
@@ -175,16 +180,18 @@ describe('BuildContext replay gaps', () => {
     expect(VariableAssignment).not.toHaveBeenCalled();
   });
 
-  it('refuses to deploy when the form was cancelled', async () => {
+  it('refuses to deploy when the form came back empty', async () => {
     const cube = testCube('cube-a', z.object({ SSID: z.string() }));
-    // The real VariableAssignment swallows a cancelled form, so the gap check
-    // has to run again afterwards or the cube ships without the variable.
+    // A form that resolves is not proof of an answer: enquirer renders
+    // `Math.min(limit, height)` fields, so a terminal misreporting its height
+    // submits `{}` without the user having seen a question. The gap check has
+    // to run again afterwards or the cube ships without the variable.
     vi.mocked(VariableAssignment).mockResolvedValue(undefined);
 
     const context = replay(cube);
 
     await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
-      'Cube "cube-a" is missing SSID and cannot be deployed.'
+      'Cube "cube-a" is missing SSID. Nothing supplied it'
     );
     expect(context.deployCalls).toHaveLength(0);
   });
@@ -194,9 +201,35 @@ describe('BuildContext replay gaps', () => {
 
     const context = replay(cube, {}, { useDefaults: true });
 
+    // A schema default is deliberately not good enough for a secret: it would
+    // deploy a different credential than the run being replayed.
     await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
-      /cannot be replayed with --use-defaults: PASSWORD/
+      /cannot be replayed with --use-defaults: PASSWORD would have to be entered\..*not accepted for a secret/s
     );
+  });
+
+  it('accepts a secret supplied through config env under --use-defaults', async () => {
+    const cube = secretCube('cube-a', z.object({ PASSWORD: z.string().default('changeme') }));
+    const context = replay(
+      cube,
+      {},
+      { useDefaults: true },
+      new Variables({ PASSWORD: 'from-env' }, ['PASSWORD'])
+    );
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(VariableAssignment).not.toHaveBeenCalled();
+    expect(context.deployCalls[0].env.PASSWORD).toBe('from-env');
+  });
+
+  it('accepts a required variable a dependency passed under --use-defaults', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+    const context = replay(cube, {}, { useDefaults: true });
+
+    await context.resolveCube('cube-a', 'host1', { SSID: 'from-param' });
+
+    expect(context.deployCalls[0].env.SSID).toBe('from-param');
   });
 });
 
@@ -237,6 +270,50 @@ describe('BuildContext session recording', () => {
     expect(context.deployCalls[0].env.PASSWORD).toBe('changeme');
     expect(context.deployCalls[0].secrets).toEqual(['PASSWORD']);
     expect(context.cubeSessions[0].variables).toEqual({ USER: 'bob' });
+  });
+});
+
+describe('BuildContext secret broadcast', () => {
+  // The field run put PASSWORD under `env` because the docs said to, and watched
+  // it appear unmasked on the command line of every cube that was not user:add.
+  const resolveBoth = async () => {
+    const declaring = secretCube('cube-a', z.object({ PASSWORD: z.string().default('changeme') }));
+    const innocent = testCube('cube-b', z.object({ PORT: z.string().default('22') }));
+    const context = new BuildContext(
+      { 'cube-a': declaring, 'cube-b': innocent },
+      new Variables({ PASSWORD: 'wildpass123', KEY_DIR: '/vault' }, ['PASSWORD']),
+      session(),
+      config,
+      { method: 'ssh' },
+      { useDefaults: true }
+    );
+
+    await context.resolveCube('cube-a', 'host1');
+    await context.resolveCube('cube-b', 'host1');
+    return context;
+  };
+
+  it('never puts an env secret on a cube that does not declare it', async () => {
+    const context = await resolveBoth();
+    const [, forB] = context.deployCalls;
+
+    expect(forB.cube).toBe('cube-b');
+    expect(forB.env).not.toHaveProperty('PASSWORD');
+    expect(forB.command.join(' ')).not.toContain('wildpass123');
+  });
+
+  it('still delivers it to the cube that declares it', async () => {
+    const context = await resolveBoth();
+    const [forA] = context.deployCalls;
+
+    expect(forA.env.PASSWORD).toBe('wildpass123');
+    expect(forA.secrets).toEqual(['PASSWORD']);
+  });
+
+  it('leaves an ordinary env key broadcast to both', async () => {
+    const context = await resolveBoth();
+
+    expect(context.deployCalls.map((call) => call.env.KEY_DIR)).toEqual(['/vault', '/vault']);
   });
 });
 
@@ -330,6 +407,38 @@ describe('BuildContext --use-defaults', () => {
     await context.resolveCube('main', 'host1');
 
     expect(context.deployCalls.map((c) => c.cube)).toEqual(['dep', 'main']);
+  });
+});
+
+describe('BuildContext interactive completeness', () => {
+  const interactive = (cube: Cube, variables = new Variables()) =>
+    new BuildContext({ [cube.id]: cube }, variables, session(), config, { method: 'ssh' });
+
+  it('refuses to deploy when the form submitted nothing', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+    // What a 0-row terminal does: the form renders no fields, the user sees no
+    // question, enquirer resolves `{}` and the run used to carry on and deploy
+    // the cube with SSID simply absent from `--data`.
+    vi.mocked(VariableAssignment).mockResolvedValue(undefined);
+
+    const context = interactive(cube);
+
+    await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
+      /Cube "cube-a" is missing SSID\. Nothing supplied it/
+    );
+    expect(context.deployCalls).toHaveLength(0);
+  });
+
+  it('deploys when the form answered', async () => {
+    const cube = testCube('cube-a', z.object({ SSID: z.string() }));
+    vi.mocked(VariableAssignment).mockImplementation(async (_cube, variables) => {
+      variables.assign('cube-a', 'prompt', { SSID: 'typed' });
+    });
+
+    const context = interactive(cube);
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.deployCalls[0].env.SSID).toBe('typed');
   });
 });
 

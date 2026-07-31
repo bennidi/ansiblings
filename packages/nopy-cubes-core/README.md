@@ -6,8 +6,17 @@ base packages, users, SSH, firewalling, networking, web serving and runtimes.
 ## Install
 
 ```sh
-pnpm add -D @bitsquare/nopy-cubes-core
+pnpm add -D @bitsquare/nopy-cubes-core@main \
+  --@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
 ```
+
+**Both halves are required today.** This bundle has not been published to npmjs
+yet, so it comes from the Gitea registry — and that registry publishes no
+`latest` tag, so an *untagged* install resolves to nothing at all. Name `@main`
+(a snapshot of every commit) or `@next` (a prerelease) explicitly. Point the
+**scope** at Gitea rather than setting a bare `registry=`: Gitea serves
+`@bitsquare` only and does not proxy npmjs, so everything else must keep
+resolving from there. Reading needs no token while the repository is public.
 
 Then name it in `.nopyrc.json`:
 

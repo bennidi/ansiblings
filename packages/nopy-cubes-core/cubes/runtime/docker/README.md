@@ -35,7 +35,9 @@ Key benefits:
 
 ## Configuration
 
-This cube currently has no configurable parameters.
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DISTRO` | `ubuntu` | which of Docker's package repositories to add — `ubuntu` or `debian`. It selects the download path and nothing else; the release codename comes from the host's own `/etc/os-release`. |
 
 ## Dependencies
 

@@ -314,8 +314,8 @@ Rename one of them, or remove a source from .nopyrc.json.
 There is deliberately no override, alias or precedence rule. If two bundles ever
 claim the same id they are mutually exclusive, and the fix is upstream.
 
-Surface the source in the interactive picker and in `--json` output so a user can
-see where a cube came from before running it.
+Surface the source in the interactive picker so a user can see where a cube came
+from before running it.
 
 ## Phase 4 — `@bitsquare/nopy-cubes`, the authoring package — **done**
 

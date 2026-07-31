@@ -3,11 +3,12 @@
 Infrastructure tooling monorepo: two published CLIs plus the pyinfra "cubes"
 they deploy.
 
-| Path              | Package            | Binary   | What it is                                          |
-| ----------------- | ------------------ | -------- | --------------------------------------------------- |
-| `packages/nopy`   | `@bitsquare/nopy`   | `nopy`   | interactive pyinfra script management and execution |
-| `packages/keyman` | `@bitsquare/keyman` | `keyman` | SSH key management with `age` encryption            |
-| `cubes/`          | —                  | —        | the deployment units `nopy` runs                    |
+| Path                       | Package                      | Binary   | What it is                                          |
+| -------------------------- | ---------------------------- | -------- | --------------------------------------------------- |
+| `packages/nopy`            | `@bitsquare/nopy`            | `nopy`   | interactive pyinfra script management and execution |
+| `packages/keyman`          | `@bitsquare/keyman`          | `keyman` | SSH key management with `age` encryption            |
+| `packages/nopy-cubes`      | `@bitsquare/nopy-cubes`      | —        | the authoring surface a cube's `manifest.mjs` imports |
+| `packages/nopy-cubes-core` | `@bitsquare/nopy-cubes-core` | —        | the core bundle of deployment units `nopy` runs     |
 
 ```sh
 npm install -g @bitsquare/nopy @bitsquare/keyman
@@ -28,7 +29,7 @@ pnpm install
 | Command                     | Does                                                |
 | --------------------------- | --------------------------------------------------- |
 | `pnpm run build`            | compiles both packages with `tsc`                   |
-| `pnpm run typecheck`        | `tsc --build --noEmit` across the workspace         |
+| `pnpm run typecheck`        | `tsc --build` across the workspace (see below)      |
 | `pnpm run lint`             | Biome check                                         |
 | `pnpm run lint:fix`         | Biome check with fixes applied                      |
 | `pnpm test`                 | vitest, both packages                               |
@@ -36,7 +37,11 @@ pnpm install
 | `pnpm run coverage:summary` | renders the last coverage run as a Markdown table   |
 
 `typescript` is on the 7.x native compiler, so `tsc` *is* the fast one — there is
-no separate `tsgo` binary to keep in sync. Each package also has a dev-run script
+no separate `tsgo` binary to keep in sync. `typecheck` is plain `tsc --build`,
+not `--noEmit`: once a project has `references`, TypeScript rejects `--noEmit`
+outright (TS6310), because a composite project has to emit the declarations its
+dependents read. So the typecheck writes `dist` as a side effect — gitignored,
+and it means the gate also proves the build works. Each package also has a dev-run script
 (`pnpm --filter @bitsquare/nopy run nopy`) that executes the TypeScript sources
 directly through `tsx`.
 

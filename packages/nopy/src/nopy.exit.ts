@@ -74,7 +74,7 @@ export function restoreTerminal(): void {
  * Says goodbye and leaves.
  *
  * The farewell goes to **stderr**, for the same reason the update hint does:
- * `--json` and `--print-only` stay machine-readable no matter how the run ends.
+ * `--print-only` stays machine-readable no matter how the run ends.
  *
  * `process.exit` rather than letting the loop drain, because the prompt that
  * was cancelled is still holding stdin — after the teardown above threw, its

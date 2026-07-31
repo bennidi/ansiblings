@@ -15,7 +15,7 @@ Nopy wraps pyinfra with structure, validation, and an interactive experience for
 - **Schema validation** using Zod
 - **Recursive cube directory discovery**
 - **Dry-run mode** for previewing deployments
-- **JSON output** for CI/CD integration
+- **Pipeable output** for CI/CD integration — the plan on stdout, everything else on stderr
 - **Session history** with replay capability
 
 ## Workflow
@@ -142,13 +142,25 @@ export default cubes.Manifest({
 
 Every entry must be a key of `schema`; naming anything else is a manifest error and aborts the run, so a typo fails loudly instead of silently leaving a value unprotected.
 
-Declaring a key a secret changes three things:
+Declaring a key a secret changes four things:
 
 - **It is never written to a session file or to the history.** Everything else the run settled on is recorded — including values that came from a `.default()` — but declared secrets are left out.
 - **It is masked wherever a command or a plan is printed** — `--dry-run`, `--print-only`, and the debug log all show `********` in place of the value, in the variable list *and* in the `pyinfra` command line above it. The SSH password passed via `--password` is masked the same way, whether or not any cube declares secrets.
 - **It is re-prompted on replay**, since there is nothing recorded to replay from (see [Session Recording and Replay](#session-recording-and-replay)).
+- **It stops travelling.** Ordinary `env` values are seeded onto every cube in the run, because a cube may read a key off `host.data` that its own schema never declared. A secret is the exception: it reaches only the cubes whose `schema` names it. Otherwise putting a password under `env` — which is what unattended replay asks you to do — would put it on the command line of every unrelated cube, where nothing masks it because that cube never called it a secret.
 
-Nopy does not guess. A key called `PASSWORD` in a manifest that declares no `secrets` is treated as an ordinary variable — recorded, and printed in the clear.
+Declaring is global, masking is global. A key any manifest calls a secret is masked and kept out of sessions on every cube it lands on, even one whose own manifest forgot to list it. What is *not* global is the guess: a key called `PASSWORD` that no manifest declares anywhere is an ordinary variable — broadcast, recorded, and printed in the clear.
+
+For a sensitive `env` value that no cube declares at all — a token only a hook reads, say — name it in the config instead:
+
+```json
+{
+    "secrets": ["DEPLOY_TOKEN"],
+    "env": { "DEPLOY_TOKEN": "..." }
+}
+```
+
+Entries here behave exactly like a manifest's: masked, never recorded, and delivered only to cubes that declare them.
 
 Three limits are worth knowing, because `secrets` keeps a value out of the files nopy writes and nothing more:
 
@@ -168,6 +180,7 @@ Uses `.nopyrc.json` files (project-level or home directory) containing:
   "env": {
     "SHARED_VAR": "value"
   },
+  "secrets": ["DEPLOY_TOKEN"],
   "log": {
     "verbosity": "info",
     "debug": false
@@ -184,7 +197,35 @@ Uses `.nopyrc.json` files (project-level or home directory) containing:
 
 `history` controls automatic session recording (see [Deployment History](#deployment-history)), and `execution.continueOnError` sets the default for `--continue-on-error`.
 
+`secrets` names `env` keys to treat as sensitive that no manifest declares — it is the config-side half of a manifest's `secrets`, and behaves identically. See [Secrets](#secrets).
+
+`hosts` seeds the target picker; see [Target hosts](#target-hosts) for what else that picker offers.
+
 `cubeDirs` holds paths, `cubePackages` holds installed npm packages that ship cubes — see [Cube Discovery](#cube-discovery) below and [CUBE-BUNDLES.md](docs/CUBE-BUNDLES.md) for publishing your own. Both are additive, and both resolve relative to the config file that named them, not to the working directory: a `.nopyrc.json` two levels up may name a package that only exists in *its* `node_modules`.
+
+#### Target hosts
+
+The host prompt offers more than the `hosts` array. Two entries at the top are
+shortcuts for pyinfra's local connectors, each asking one follow-up question and
+assembling the host string from the answer:
+
+| Picked | Asks for | Becomes |
+| --- | --- | --- |
+| `docker` | a container name/id, **or** an image reference | `@docker/<answer>` |
+| `vagrant` | the machine name (default `default`) | `@vagrant/<answer>` |
+| *(a configured host)* | — | itself |
+| `custom` | any address | itself |
+
+The two connector forms can equally be written into `hosts` directly — a session
+records whatever string the run used, so `"hosts": ["@vagrant/nopytestvm"]` and
+picking `vagrant` are the same thing to everything downstream.
+
+The docker answer is deliberately not validated as one kind or the other, because
+the two mean very different things and only the connector can tell them apart (it
+looks for a matching container first). A **container** is mutated in place and
+left running; an **image** makes pyinfra start a throwaway container, apply the
+deploy, commit the result as a new image and print its id. See
+[DOCKER.md](docs/DOCKER.md) and [VAGRANT.md](docs/VAGRANT.md).
 
 #### Logging Configuration
 
@@ -259,12 +300,17 @@ Sessions are stored in `.nopysession.json` files with the following structure:
 - **`env`**: The `env` block of `.nopyrc.json` as it stood at record time, kept for reference
 - **`hosts`**: Array of target hosts
 - **`auth`**: Authentication configuration (passwords are never stored)
+- **`version`**, **`timestamp`**, **`name`**: stamped on every session nopy writes — the format version, the ISO 8601 record time, and a one-line description in the same `date - cubes → hosts` form the history list uses
+
+Only `cubes` and `auth` are required. A hand-written session may omit the rest, and one that predates the stamp still loads; a `version` this build does not recognise is a warning on stderr, never a refusal.
+
+`auth.method` has a third value the picker never offers: **`ssh`**, meaning the connector owns authentication and nopy supplies none. It is what an `@vagrant/` or `@docker/` host gets, which is why replaying one asks for nothing.
 
 **What is recorded:** every value each cube settled on, regardless of where it came from — a value the user typed, one inherited from `.nopyrc.json` `env`, one a dependency supplied, and one that fell through to the schema's `.default()` are all written out the same way. A session is therefore a full snapshot rather than a diff, and a `--use-defaults` run produces a session with real values in it instead of an empty one.
 
 The consequence is that replay is faithful rather than re-derived: the recorded value outranks the current `.nopyrc.json` `env` and the current schema default, so editing either one does not silently change what a replay does. To pick up a new default, record a fresh session.
 
-**Security Note**: Passwords are never stored in session files. This covers both the SSH password — a session records the auth *method* and username, never the credential — and any schema key a cube's manifest lists under [`secrets`](#secrets). Both are re-prompted on replay.
+**Security Note**: Passwords are never stored in session files. This covers both the SSH password — a session records the auth *method* and username, never the credential — and any schema key a cube's manifest lists under [`secrets`](#secrets). Both are re-prompted on replay. The rule applies to the session's `env` block as well as to each cube's `variables`, so a declared secret set in `.nopyrc.json` is left out of the recorded copy rather than written back out in plaintext.
 
 #### Recording a Session
 
@@ -274,6 +320,9 @@ nopy install --save-session my-deployment.nopysession.json
 
 # With defaults (no prompts for variables)
 nopy install -D --save-session automated-deployment.nopysession.json
+
+# Also works on a replay — the resolved cube set is what you asked to capture
+nopy install -R --save-session repeat-of-the-last-run.nopysession.json
 ```
 
 #### Replaying a Session
@@ -288,7 +337,9 @@ nopy install --load-session my-deployment.nopysession.json
 
 A replay runs straight through without asking anything, with three exceptions. Password authentication always re-prompts. A session with no recorded host falls back to the host picker. And a cube is re-prompted for its declared secrets, plus for any required variable the session has no value for — which happens when the cube's schema has gained a field since the session was written.
 
-Those re-prompts are what a session cannot supply, so `--use-defaults` cannot paper over them: combining `-D` with a replay that needs either fails with a message naming the keys rather than deploying with a placeholder. Put the values under `env` in `.nopyrc.json` to make such a replay unattended.
+Those re-prompts are what a session cannot supply, so `--use-defaults` cannot paper over them: combining `-D` with a replay that needs either fails with a message naming the keys rather than deploying with a placeholder. Put the values under `env` in `.nopyrc.json` — or pass them from a dependency — to make such a replay unattended. A secret supplied that way reaches only the cubes that declare it, so this does not broadcast it across the run; see [Secrets](#secrets).
+
+A schema `.default()` is deliberately *not* accepted in its place. The recorded answer is gone on purpose, so falling back to the manifest would deploy a different credential than the run being replayed, and say nothing about it.
 
 ### Cube Discovery
 
@@ -314,12 +365,16 @@ A cube package is an ordinary npm package that ships its cubes in a `cubes/` dir
 Install it and name it — nothing needs linking or copying:
 
 ```sh
-pnpm add -D @bitsquare/nopy-cubes-core
+pnpm add -D @bitsquare/nopy-cubes-core@main \
+  --@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
 ```
 
 ```json
 { "cubePackages": ["@bitsquare/nopy-cubes-core"] }
 ```
+
+The tag and the registry flag are both required for this bundle today — see
+[Installation](#installation).
 
 Naming a package is a statement that cubes are expected from it, so anything wrong is an error that aborts the run rather than a silent skip: the package is not installed, it has neither a `cubes/` directory nor a `nopy.cubes` override, its `nopy.cubes` is malformed, or an entry points at a directory that does not exist or lies outside the package.
 
@@ -331,6 +386,18 @@ Writing cubes to publish is covered in [CUBE-BUNDLES.md](docs/CUBE-BUNDLES.md).
 
 ## Command Line Usage
 
+### Requirements
+
+| | |
+| --- | --- |
+| **Node** | ≥ 22 |
+| **pyinfra** | on `PATH` — `pipx install pyinfra` |
+| **the connector** | `vagrant` or `docker` on `PATH`, if you deploy to one |
+
+nopy builds pyinfra command lines and spawns them; it does not vendor pyinfra and
+will not install it for you. A missing `pyinfra` surfaces as a spawn failure on
+the first deploy, after every prompt has been answered.
+
 ### Installation
 
 ```bash
@@ -341,12 +408,20 @@ The cubes live in a separate bundle, installed into whichever project describes
 your infrastructure and named in its `.nopyrc.json`:
 
 ```bash
-pnpm add -D @bitsquare/nopy-cubes-core
+pnpm add -D @bitsquare/nopy-cubes-core@main \
+  --@bitsquare:registry=https://gitea.bitsquare.dev/api/packages/BitSquare/npm/
 ```
 
 ```json
 { "hosts": ["your-host"], "cubePackages": ["@bitsquare/nopy-cubes-core"] }
 ```
+
+**The tag and the registry flag are both required for the bundle today.** It has
+not been published to npmjs yet, and the Gitea registry publishes no `latest`
+tag, so a plain `pnpm add -D @bitsquare/nopy-cubes-core` fails with a 404 against
+npmjs and an untagged Gitea install resolves to nothing. Name `@main` or `@next`
+explicitly. See [Channels](#channels) for what the tags mean and how to set the
+scope persistently. The CLI itself is on npmjs and installs without either.
 
 #### Channels
 
@@ -406,8 +481,8 @@ npm install -g @bitsquare/nopy@latest
 ```
 
 Once a day, `nopy` checks its channel in the background and prints a one-line
-hint to **stderr** when a newer version exists — never to stdout, so `--json`
-and `--print-only` output stay clean. The answer is cached in
+hint to **stderr** when a newer version exists — never to stdout, so a piped
+`--print-only` stays clean. The answer is cached in
 `~/.nopy/update-check.json`; a registry that is slow or unreachable is given
 1.5 seconds and then ignored.
 
@@ -493,11 +568,14 @@ Every deployment is automatically recorded to a `.nopy.history.json` file in the
 
 The recording happens before the deploy commands run, so a **failed** deployment is recorded too — `-R` is the quick way to retry one after fixing the cause. Replaying a session with `-R` or `-H` does not itself create a new entry, so repeating never pushes the original run out of the list.
 
+A `--load-session` run *is* recorded, and the distinction is the point: a session file has never been in history, so without the entry `nopy history` would report nothing afterwards and `-R` would have nothing to repeat.
+
 A run is *not* recorded when:
 
-- `--dry-run` or `--no-history` is passed
+- `--dry-run`, `--print-only` or `--no-history` is passed — the first two deploy nothing, and history is what `-R` repeats
 - No cubes were selected, so there was nothing to deploy
 - `history.autoSave` is set to `false` in `.nopyrc.json`
+- it is a `-R` or `-H` replay, as above
 
 Because the history file is resolved against the current working directory, each project keeps its own history — running nopy from a different directory will not find the previous run. As with session files, passwords are never stored and are re-prompted on replay.
 
@@ -534,14 +612,26 @@ nopy install --dry-run
 
 Shows the execution plan including commands, environment variables, and targets without running anything. Sensitive data is masked in output.
 
-**JSON output (for CI/CD)**:
+**CI/CD**:
 
 ```bash
-nopy install --json
-nopy history --json
+nopy install --print-only > plan.txt   # the commands, and nothing else
+nopy install -D                        # run it; exit code 1 if any cube failed
 ```
 
-Machine-readable JSON output for scripting and CI/CD integration.
+There is no `--json` on `install`, deliberately. A deploy runs pyinfra with
+inherited stdio, so during a run nopy does not own its own stdout — pyinfra does,
+and writes an unbounded amount to it. Anything nopy appended afterwards would not
+be parseable by any definition a caller could rely on. Two things are guaranteed
+instead:
+
+- **stdout carries the deploy commands and pyinfra's own output. Everything nopy
+  says about itself — the config banner, progress lines, warnings, the update
+  hint, errors — goes to stderr.** So `--print-only` redirects cleanly.
+- **The exit code is the verdict**: `1` if any cube failed, `0` otherwise.
+
+`nopy history --json` is unaffected and is how a script finds the id to pass to
+`-H`.
 
 **Continue on error**:
 

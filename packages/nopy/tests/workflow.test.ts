@@ -78,7 +78,7 @@ describe('runInteractiveWorkflow', () => {
 
     expect(result.selectedCubes).toEqual(['cube-a']);
     expect(result.authMethod).toBe('ssh-key');
-    expect(result.isReplay).toBe(false);
+    expect(result.replaySource).toBeUndefined();
     expect(result.session.hosts).toEqual(['web-1']);
     expect(result.session.env).toEqual({ GLOBAL: 'value' });
     expect(mockHostSelection).toHaveBeenCalledWith(config.hosts);
@@ -150,7 +150,7 @@ describe('runReplayWorkflow', () => {
     const result = await runReplayWorkflow('/tmp/s.json', cubes, config);
 
     expect(mockLoadSession).toHaveBeenCalledWith('/tmp/s.json');
-    expect(result.isReplay).toBe(true);
+    expect(result.replaySource).toBe('file');
     expect(result.selectedCubes).toEqual(['cube-a']);
     expect(mockHostSelection).not.toHaveBeenCalled();
     expect(mockPasswordSelection).not.toHaveBeenCalled();
@@ -225,7 +225,7 @@ describe('runSessionReplayWorkflow', () => {
   it('replays an in-memory session without prompting', async () => {
     const result = await runSessionReplayWorkflow(session(), cubes, config);
 
-    expect(result.isReplay).toBe(true);
+    expect(result.replaySource).toBe('history');
     expect(result.selectedCubes).toEqual(['cube-a']);
     expect(mockLoadSession).not.toHaveBeenCalled();
     expect(mockHostSelection).not.toHaveBeenCalled();
@@ -287,7 +287,7 @@ describe('runWorkflow dispatch', () => {
   it('prefers an in-memory replay session over everything else', async () => {
     const result = await runWorkflow('/tmp/s.json', cubes, config, {}, session());
 
-    expect(result.isReplay).toBe(true);
+    expect(result.replaySource).toBe('history');
     expect(mockLoadSession).not.toHaveBeenCalled();
     expect(mockCubeSelection).not.toHaveBeenCalled();
   });
@@ -298,14 +298,14 @@ describe('runWorkflow dispatch', () => {
     const result = await runWorkflow('/tmp/s.json', cubes, config);
 
     expect(mockLoadSession).toHaveBeenCalledWith('/tmp/s.json');
-    expect(result.isReplay).toBe(true);
+    expect(result.replaySource).toBe('file');
     expect(mockCubeSelection).not.toHaveBeenCalled();
   });
 
   it('falls back to the interactive workflow', async () => {
     const result = await runWorkflow(undefined, cubes, config, { useAuthKey: true });
 
-    expect(result.isReplay).toBe(false);
+    expect(result.replaySource).toBeUndefined();
     expect(mockCubeSelection).toHaveBeenCalled();
     expect(mockAuthSelection).toHaveBeenCalledWith(true);
   });

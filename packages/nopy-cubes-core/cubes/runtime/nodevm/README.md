@@ -1,69 +1,79 @@
 # nodevm
 
-**Install Node.js with essential global packages**
+**Install Node.js through nvm, for one user, with global packages**
 
 ## Purpose
 
-This cube installs the latest LTS (Long Term Support) version of Node.js along with essential global npm packages commonly needed for development and deployment.
+Installs [nvm](https://github.com/nvm-sh/nvm) into a single user's home
+directory, uses it to install one pinned Node.js version under an alias, and
+installs a list of global npm packages for that user.
 
-## What is Node.js?
-
-Node.js is a JavaScript runtime built on Chrome's V8 engine that allows you to run JavaScript on the server. It's widely used for:
-
-- Building web servers and APIs
-- Command-line tools
-- Build tools and task runners
-- Real-time applications (chat, notifications)
-- Microservices
+Per-user, not system-wide. Nothing is placed on the system `PATH`, and another
+user on the same host is unaffected — which is the point: version pinning belongs
+to whoever runs the app.
 
 ## What This Cube Does
 
-1. **Installs Node.js LTS**
-   - Downloads and runs the official NodeSource setup script
-   - Installs the latest LTS version of Node.js
-   - Includes npm (Node Package Manager)
-
-2. **Installs build dependencies**
-   - `libssl-dev` - SSL/TLS libraries
-   - `libtool` - Library building tools
-   - `cmake` - Cross-platform build system
-   - `libpng-dev`, `libjpeg-dev`, `libvips-dev` - Image processing libraries
-
-3. **Installs global npm packages**
-   - **npm@11.1.0** - Latest npm version
-   - **pm2** - Production process manager for Node.js apps
-   - **yarn** - Alternative package manager
-   - **local-web-server** - Local development web server
-   - **node-gyp** - Node.js native addon build tool
-   - **inquirer** - Interactive command-line prompts
-   - **execa** - Better child process execution
-   - **@dotenvx/dotenvx** - Environment variable management
+1. **Installs build dependencies** with apt, as root — `build-essential`,
+   `libssl-dev`, `libtool`, `cmake`, and the cairo/pango/png/jpeg/vips/rsvg/pixman
+   headers that native addons need. The package index is refreshed first: a box
+   nobody has updated lists .deb versions the mirror has already dropped.
+2. **Installs nvm** for `USER` via the official install script, then
+   `nvm install <VERSION>` and `nvm alias <ALIAS> <VERSION>`.
+3. **Installs `GLOBAL_PACKAGES`** with `npm install -g`, as `USER`.
 
 ## Configuration
 
-This cube currently has no configurable parameters.
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `VERSION` | `v22.20.0` | the Node.js version nvm installs. A pin, not "latest LTS" — nvm's own version strings work, so `--lts` or `22` are accepted too. |
+| `USER` | `vagrant` | the user nvm is installed **for**. Everything lands in that user's `~/.nvm`. |
+| `ALIAS` | `nodelts` | the nvm alias pointing at `VERSION`, so later cubes and scripts can say `nvm use nodelts` without knowing the number. |
+| `GLOBAL_PACKAGES` | `pm2 yarn local-web-server node-gyp inquirer execa @dotenvx/dotenvx` | space-separated, passed to one `npm install -g`. Setting it **replaces** the list rather than adding to it. |
+| `SHELL` | `fish` | the login shell to install through — `fish` or `bash`. See below. |
+
+### `SHELL`
+
+nvm wires itself into whichever shell installed it, so this is not cosmetic.
+
+- **`fish`** (default) additionally requires **Oh My Fish**, because loading nvm
+  goes through the `omf install nvm` plugin. `user:add` installs both, which is
+  the usual way a host arrives here. The cube fails with one line, before
+  changing anything, if `SHELL=fish` on a host with no fish.
+- **`bash`** needs nothing beyond bash. Use it on a host where `user:add` has not
+  run.
+
+The default stays `fish` so that an existing user — whose login shell `user:add`
+set to fish — keeps getting a Node that their shell can actually see. Switching
+would install it invisibly.
 
 ## Dependencies
 
-None - this cube can run standalone.
+None declared: the cube runs standalone. With `SHELL=fish` it does have a real
+prerequisite (fish + Oh My Fish, which `user:add` provides), but `user:add` is
+deliberately not a declared dependency — it would *create* a user who is normally
+meant to already exist. `SHELL=bash` is the standalone path.
 
 ## Post-Installation
 
-Verify installation:
+`node` is on `USER`'s `PATH` in a login shell, not in root's and not in a
+non-interactive one. To check:
+
 ```bash
-node --version
-npm --version
+su - <USER> -c 'node --version && npm --version'
 ```
 
-Common commands:
-- Run a Node.js app: `node app.js`
-- Start with PM2: `pm2 start app.js`
-- Install packages: `npm install <package>`
-- Use yarn: `yarn add <package>`
+From a bash script that is not a login shell, load nvm first:
 
-## PM2 - Process Manager
+```bash
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"
+nvm use nodelts
+```
 
-PM2 is included for production deployments. Common PM2 commands:
+## PM2 — process manager
+
+`pm2` is in the default `GLOBAL_PACKAGES`, so it is installed unless you replaced
+the list.
 
 ```bash
 pm2 start app.js              # Start application
@@ -75,9 +85,11 @@ pm2 startup                   # Enable PM2 on boot
 pm2 save                      # Save current process list
 ```
 
+`pm2 startup` prints a `sudo` command to run; it does not enable itself.
+
 ## Notes
 
-- Node.js is installed system-wide
-- Global packages are accessible to all users
-- npm cache is stored in `~/.npm`
-- Use `nvm` if you need multiple Node.js versions
+- Node.js is installed **per user**, under `~/.nvm` for `USER`.
+- Global packages belong to that user too, not to everyone on the host.
+- Run the cube again with a different `VERSION` and `ALIAS` to have several
+  versions side by side; nvm is built for exactly that.

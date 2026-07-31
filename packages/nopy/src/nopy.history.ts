@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { NopySession } from './nopy.session.js';
+import { describeSession, type NopySession } from './nopy.session.js';
 
 /** Default number of sessions to keep in history */
 export const DEFAULT_HISTORY_SIZE = 10;
@@ -73,35 +73,6 @@ export function saveHistory(history: SessionHistory): void {
 }
 
 /**
- * Generates a history entry name from session data
- *
- * Format: "YYYY-MM-DD HH:mm - cube1, cube2, ..."
- *
- * @param session - The session to name
- * @param timestamp - ISO timestamp
- * @returns Human-readable name
- */
-function generateEntryName(session: NopySession, timestamp: string): string {
-  const date = new Date(timestamp);
-  const dateStr = date.toLocaleString('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-
-  const cubeNames = session.cubes.map((c) => c.key).join(', ');
-  const truncatedCubes = cubeNames.length > 40 ? `${cubeNames.substring(0, 37)}...` : cubeNames;
-
-  const hosts = session.hosts?.join(', ') || 'no host';
-  const truncatedHosts = hosts.length > 20 ? `${hosts.substring(0, 17)}...` : hosts;
-
-  return `${dateStr} - ${truncatedCubes} → ${truncatedHosts}`;
-}
-
-/**
  * Generates a unique ID for a history entry
  */
 function generateEntryId(): string {
@@ -124,7 +95,7 @@ export function addToHistory(
 
   const entry: HistoryEntry = {
     id: generateEntryId(),
-    name: generateEntryName(session, timestamp),
+    name: describeSession(session, timestamp),
     timestamp,
     session,
   };

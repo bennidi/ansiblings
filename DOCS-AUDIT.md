@@ -19,17 +19,41 @@ the record of what was wrong. So far: §1.1 (`--use-defaults`), §2.2
 (`getDefaults()`), §2.1 (precedence — the second half closed differently than
 proposed), §3 in full (`docs/API.md`, regenerated), §4.2 (password on stdout —
 points 1 and 2 of 3), §4.3 (what a session records), §2.9 (the nopy README's
-yarn install instructions), and one bullet of §6.4.
+yarn install instructions), §2.4 (`version` / `timestamp`, implemented rather
+than deleted), §2.5 (`listSessions`' filename filter), §4.5 (`-s` on a replay,
+plus `-l` and history), §6.7 (a secret written to the session in plaintext), and
+one bullet of §6.4.
 
 Closing §3 also settled the documentation half of several findings elsewhere
-without touching their underlying cause: §1.2, §1.3, §1.5, §2.3, §2.7, §4.4 and
+without touching their underlying cause: §1.3, §1.5, §2.3, §2.7, §4.4 and
 §6.5 are each now stated accurately in `docs/API.md`, but the code still behaves
-as those findings describe and they stay open.
+as those findings describe and they stay open. §1.2 was closed outright by
+removing the flag.
+
+## Where the drift is
+
+A field run against a fresh VM sorted the findings for us, and they cluster on
+one seam. **Everything a human reads on screen matched the documentation.
+Everything machine-facing had drifted** — `--json`, the session format, `-s` on a
+replay, `-l` and history, `runtime:nodevm`'s parameters, the bundle's install
+command.
+
+That is not random rot. The interactive surface is maintained by daily use: a
+wrong prompt label is noticed the next time someone runs the thing. The scripting
+surface was documented from intent and then never exercised, so nothing pushed
+back when it changed or was never built.
+
+Corrections come in the two shapes that distinction implies. `--json` was
+documented from intent and never built, so it was removed (§1.2). The rest was
+built and then drifted, so it was fixed. Keeping it fixed means what remains of
+the scripting surface — `--print-only`, sessions, history — needs tests that
+assert on **stdout**, not prose.
 
 ---
 
 ## Contents
 
+- [Where the drift is](#where-the-drift-is)
 - [1. Documented features that do not exist](#1-documented-features-that-do-not-exist)
 - [2. Documented behaviour that differs from the code](#2-documented-behaviour-that-differs-from-the-code)
 - [3. ✅ `docs/API.md` — systematic drift — fixed](#3--docsapimd--systematic-drift--fixed)
@@ -82,7 +106,7 @@ nopy.cli.ts:95         useDefaults: options...     # passed
 cubes/dependencies.ts:35  useDefaults?: boolean;   # declared — and that is all
 ```
 
-### 1.2 🔴 `-j, --json` produces no output on success
+### 1.2 🔴 `-j, --json` produces no output on success — **closed by removal**
 
 | | |
 |---|---|
@@ -103,6 +127,17 @@ Related: `--dry-run --json` prints the **text** plan, not JSON.
 `executeDeployCalls` calls `outputExecutionPlan(calls)` without the `asJson`
 argument (`nopy.executor.ts:172`), even though the function supports it
 (`nopy.executor.ts:110`).
+
+**Closed by deleting the flag, not by implementing it.** `executeDeployCalls`
+runs pyinfra with *inherited* stdio, so during a run nopy does not own its own
+stdout — pyinfra does. A JSON blob appended after an unbounded amount of another
+process's output is not machine-readable by any definition a caller could rely
+on; making it so means capturing pyinfra's output and giving up live progress.
+Same root cause as `ExecutionResult.stdout` never being populated. What replaced
+it is a promise a test can hold to: **stdout carries the deploy commands and
+pyinfra's own output, everything nopy says about itself goes to stderr**, and the
+exit code is the verdict. `nopy history --json` is a different flag, it works,
+and it stays.
 
 ### 1.3 🟠 `log.verbosity` and `log.debug` have no effect
 
@@ -275,7 +310,19 @@ the two documents disagree, and neither mentions that it matters.
 `net:tailscale` (all 4 fields), `runtime:nodevm` (all 4), `user:add` (all 4),
 `ssh:keygen` (all 4) and `admin:locale` (all 4).
 
-### 2.4 🟠 Session files claim `version` and `timestamp` fields
+### 2.4 ✅ Session files claim `version` and `timestamp` fields — **fixed**
+
+Closed by implementing them rather than deleting the claim. `createSession`
+stamps `version: '1.0.0'` (exported as `SESSION_VERSION`) and an ISO
+`timestamp`; `nopy()` fills in a default `name` at save time, using the same
+`describeSession()` the history list uses — one implementation, so the two
+cannot drift. `loadSession` still requires only `cubes` and `auth`, so every
+session written before this, and every hand-written one, keeps loading; an
+unrecognised `version` is a warning on stderr, never a refusal. The interface
+and both documents now mark the three fields optional, which is what they are.
+
+The original finding follows.
+
 
 `README.md:179-181` shows a session with `"version": "1.0.0"` and
 `"timestamp": "2025-10-13T10:30:00Z"`, and `docs/SESSION_FORMAT.md:305-306`
@@ -293,7 +340,14 @@ Consequence: a `version` field implies a compatibility check that does not exist
 Nothing reads it, so an incompatible old session fails later and more obscurely
 than a version check would.
 
-### 2.5 🟠 Session filename convention does not match `listSessions()`
+### 2.5 ✅ Session filename convention does not match `listSessions()` — **fixed**
+
+`listSessions` now matches `*.nopysession.json` and `*.nopysession.mjs` as well
+as the two shorter suffixes — `saveSession` writes whatever path it is handed,
+so files under the old name exist and there was no reason to stop finding them.
+
+The original finding follows.
+
 
 The READMEs consistently use `*.nopysession.json` (`README.md:223`, `330`, `338`;
 `docs/DOCKER.md:54`; the shipped `example.nopysession.json`).
@@ -443,8 +497,7 @@ first.
 >
 > Three things were deliberately added rather than merely corrected. A
 > **Known gaps** section states the behaviour a reader would otherwise take on
-> trust — `logConfigToFlags` being unconsumed (§1.3), `--json` printing nothing
-> on success (§1.2), the absent cycle detection (§1.5, §6.5), `DeployCall.dependencies`
+> trust — `logConfigToFlags` being unconsumed (§1.3), the absent cycle detection (§1.5, §6.5), `DeployCall.dependencies`
 > always being `[]`, `ExecutionResult.stdout`/`stderr` never being populated, and
 > hook variables not being schema-validated (§2.7). The `.describe()`/`.default()`
 > ordering hazard (§2.3) is called out where the manifest example lives, with the
@@ -633,7 +686,22 @@ Worth documenting alongside `--dry-run`, since the difference is not obvious:
 `--print-only` returns a `NopyResult` with `successful: 0` and skips execution
 entirely, while `--dry-run` goes through the executor.
 
-### 4.5 🟡 `--save-session` is ignored during a replay
+### 4.5 ✅ `--save-session` is ignored during a replay — **fixed**
+
+The guard is gone: the resolved cube set is exactly what the user asked to
+capture, and a session written from a replay is no less valid than one written
+from a fresh run. The README's "Recording a Session" examples now include the
+replay form.
+
+Fixed alongside it, from the same field run: a `--load-session` run was excluded
+from history along with `-R`/`-H`, which was right for the latter two and wrong
+for the first — a session file has never been in history, so `nopy history`
+reported nothing afterwards and `-R` had nothing to repeat. `WorkflowResult`
+now carries `replaySource: 'file' | 'history' | undefined` instead of a boolean,
+which is the distinction the boolean could not express.
+
+The original finding follows.
+
 
 `nopy.main.ts:191` guards with `saveSessionPath && !workflow.isReplay`, so
 `nopy install -R -s out.json` writes nothing and says nothing. The
@@ -806,6 +874,88 @@ same shape as the `PASSWORD` default that was removed. It is recorded in the
 session, so replays are stable, but each fresh `-D` run still creates a
 differently-named account.
 
+### 6.7 ✅ A declared secret was written to the session file in plaintext — **fixed**
+
+Found in the acceptance run, not by reading. `README.md` promises that a session
+holds no secret: "Passwords are never stored in session files. This covers both
+the SSH password ... and any schema key a cube's manifest lists under `secrets`."
+The `variables` block honoured that — `persistable()` leaves a declared secret
+out entirely. The `env` block, one key higher in the same file, was a verbatim
+copy of `.nopyrc.json`'s, so a credential declared there was written to the
+session **and** to `.nopy.history.json` in plaintext.
+
+Two of the fixes above widened the blast radius before it was noticed: §4.5 made
+`--save-session` work on a replay, and §3.2 started recording `--load-session`
+runs to history. Both write more files than before.
+
+`Variables.persistableEnv()` applies the same rule to `env` that `persistable()`
+applies to `variables`, and `nopy()` uses it instead of `config.env`. Verified in
+the field: with `SSH_PASSWORD` declared under `secrets` and set in `env`, neither
+the written session nor the history file contains the value.
+
+### 6.8 ✅ `--print-only` was recorded in history — **fixed**
+
+Also found in the acceptance run. `--dry-run` is excluded from history because it
+deploys nothing; `--print-only`, which also deploys nothing, was not. Four
+interactive runs against the VM produced four history entries, two of them from
+`-P` passes that had only printed a command — and since `-R` repeats the head of
+the list, the safe look-before-you-leap flag displaced the last real deployment
+as the thing a bare `-R` would re-run.
+
+One condition, `!printOnly`, alongside the `!dryRun` it belongs with. The
+`README` list of "a run is *not* recorded when" and `docs/API.md` say so now.
+
+### 6.9 ✅ Deploy order is the dependency tree; `CubeSelection` decides only the ties — **write-up corrected**
+
+Found in the acceptance run, and the first write-up of it here was wrong. It
+claimed a fix "has to decide what the right order even is — the order they were
+picked in, or a topological one over `dependencies()`". Neither: the order is the
+dependency tree, and that is already what nopy does. `resolveCube` resolves
+`dependencies()` before emitting the cube itself, so emission is DFS post-order —
+a topological order by construction. The recursion *is* the sort, which is what
+`docs/API.md` means by "no separate topological sort", and `nopy.main.ts` walking
+`selectedCubes` cannot break it: a cube listed ahead of its own dependency still
+drags that dependency in first, and the second visit is deduped by `callKey`
+rather than re-emitted at the tail. Pinned by *deploy order across several
+selected cubes* in `tests/cubes.dependencies.test.ts`, both ways round.
+
+This does not reopen §1.5, which stands: the *output* is a topological order but
+there is no sort *algorithm*, and the price of that is still no cycle detection —
+two mutually dependent cubes recurse until the stack overflows.
+
+What list order does decide is where a cube with **no** edge lands, and that is
+the whole of the real finding. `CubeSelection` returns enquirer's `selected`,
+which is `choices.filter(enabled)` — display order, sorted by cube id, not the
+order you ticked them. So picking `user:add` and `runtime:nodevm` yields
+`['runtime:nodevm', 'user:add']`, and nothing reorders them because
+`runtime:nodevm` declares `dependencies: () => []`. The acceptance run split them
+into two invocations.
+
+That missing edge is deliberate and stays missing: `user:add` *creates* a user,
+so declaring it would make installing Node into an existing account silently
+provision a new one. The prerequisite `SHELL=fish` really has is "fish and Oh My
+Fish exist for `USER`", which no cube offers on its own — `user:add` only
+provides it in passing. §5.3's `DeployError` is the answer for that, and it fires
+before anything is changed. Ordering cannot fix an edge nobody can honestly
+declare.
+
+One residue, verified and left alone: an `after` hook's `exec(id)` runs after its
+own cube is emitted, so it expresses "B after A" — but if B is also selected and
+listed first, B is emitted first and the intent inverts. `after` hooks are not
+the dependency graph and no cube in the bundle relies on this.
+
+### 6.10 ✅ `runtime:nodevm` installed apt packages without refreshing the index — **fixed**
+
+The same defect as §5.3 one operation earlier, and it only surfaced once §5.3 was
+fixed and the cube could be run on a box where nothing else had. `apt.packages`
+was called without `update`, alone among the six cubes in the bundle that install
+packages. On a fresh `bento/ubuntu-24.04` the shipped index names .deb versions
+the mirror has already superseded, so the fetch 404s and pyinfra reports
+`executed 0 commands` before nvm is ever reached.
+
+It passed on the first VM only because `user:add` had run there and pulled in
+`apt:essentials`, which does pass `update`. Fixed with `update=True` on the call.
+
 ---
 
 ## 7. Checked and accurate
@@ -851,9 +1001,10 @@ Recording what was verified and found correct, so a future pass need not redo it
 **1 — ~~Decide on the three phantom features.~~ Two left.** §1.1 (`-D`) is
 **done** — implemented, tested, and verified against every cube in `cubes/`.
 That closed §2.2 and half of §2.1 with it, since neither could be left standing
-under a run that never prompts. §1.2 (`--json`) and §1.3 (`log.*`) are still
-"documented, wired up, never read": each is a small implementation or a small
-deletion, but neither can stay documented as working.
+under a run that never prompts. §1.2 (`--json`) is **done** — removed rather
+than implemented, for the reason recorded there. §1.3 (`log.*`) is still
+"documented, wired up, never read": a small implementation or a small deletion,
+but it cannot stay documented as working.
 
 **4 — Decide the `.describe()`/`.default()` ordering (§2.3).** Either read
 through the `ZodDefault` wrapper in `nopy.prompts.ts`, or fix the ordering in all

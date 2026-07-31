@@ -17,6 +17,45 @@ interface CubeChoice {
   message: string;
 }
 
+/** Floor for a terminal that reports a size no prompt could render into. */
+const MIN_ROWS = 24;
+const MIN_COLS = 80;
+
+/**
+ * The window size to hand an enquirer prompt, never smaller than {@link MIN_ROWS}.
+ *
+ * Load-bearing, not cosmetic. enquirer derives how many choices are visible from
+ * its height, and `utils.height` (`lib/utils.js:80`) computes a sane fallback and
+ * then throws it away:
+ *
+ * ```js
+ * let rows = (stream && stream.rows) ? stream.rows : fallback;
+ * if (stream && typeof stream.getWindowSize === 'function') {
+ *   rows = stream.getWindowSize()[1];          // unconditional
+ * }
+ * ```
+ *
+ * A TTY always has `getWindowSize`, so a terminal reporting 0 rows — some CI
+ * pseudo-terminals, `script -q`, an editor terminal mid-startup — yields
+ * `height: 0`, `Math.min(limit, 0)` choices, and a form that renders nothing and
+ * submits `{}`. Passing `rows` bypasses that: `prompt.js:396` reads
+ * `this.options.rows || utils.height(...)`, so the broken function never runs.
+ *
+ * Measured on a 0×0 pty: without this the four-field form returns `{}`; with it,
+ * every field. No effect on a terminal that reports its size honestly.
+ * enquirer 2.4.1 is its final release, so the bug is not going to be fixed
+ * upstream.
+ */
+function terminalSize(out: NodeJS.WriteStream = process.stdout): {
+  rows: number;
+  columns: number;
+} {
+  return {
+    rows: Math.max(out.rows || 0, MIN_ROWS),
+    columns: Math.max(out.columns || 0, MIN_COLS),
+  };
+}
+
 /**
  * Fuzzy-filters the cube list against what the user has typed so far.
  *
@@ -52,8 +91,8 @@ export async function CubeSelection(
   // Clear terminal and move cursor to top
   process.stdout.write('\x1B[2J\x1B[0f');
 
-  const terminalHeight = process.stdout.rows || 24;
-  const pageSize = Math.max(10, terminalHeight - 5);
+  const size = terminalSize();
+  const pageSize = Math.max(10, size.rows - 5);
 
   console.log('\n  Cube Selection\n');
   console.log('  Type to filter • Space to select • Enter to confirm\n');
@@ -65,14 +104,15 @@ export async function CubeSelection(
     multiple: true,
     choices: cubeChoices,
     suggest: suggestCubes,
+    ...size,
   });
 
-  try {
-    return { selectedCubes: await prompt.run() };
-  } catch {
-    // User cancelled
-    return { selectedCubes: [] };
-  }
+  // Deliberately no catch. Swallowing a cancellation here used to return an
+  // empty selection, which is indistinguishable from "the user picked nothing"
+  // and let the run carry on to deploy zero cubes. Both ways out now travel:
+  // a cancellation to `isCancellation` at the CLI boundary, anything else as
+  // the failure it is.
+  return { selectedCubes: await prompt.run() };
 }
 
 export async function AuthSelection(useAuthKey?: boolean): Promise<{
@@ -239,17 +279,17 @@ export async function VariableAssignment<S extends AnyObjectSchema>(
     name: 'variables',
     message: `[${cube.id}] ${cube.name}\n  (↑↓ navigate, Enter to submit)`,
     choices,
+    ...terminalSize(),
   });
 
-  try {
-    const result = await form.run();
-    const coercedResult: Record<string, any> = {};
-    for (const [key, value] of Object.entries(result)) {
-      const zodType = schema[key];
-      coercedResult[key] = zodType ? coerceValue(value, zodType) : value;
-    }
-    variables.assign(cube.id, 'prompt', coercedResult);
-  } catch {
-    // User cancelled
+  // Deliberately no catch — see `CubeSelection`. A cancelled form used to be
+  // swallowed here, leaving the cube short of values only the user could give
+  // and the run continuing as though the form had succeeded.
+  const result = await form.run();
+  const coercedResult: Record<string, any> = {};
+  for (const [key, value] of Object.entries(result)) {
+    const zodType = schema[key];
+    coercedResult[key] = zodType ? coerceValue(value, zodType) : value;
   }
+  variables.assign(cube.id, 'prompt', coercedResult);
 }

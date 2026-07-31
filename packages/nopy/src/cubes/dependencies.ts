@@ -7,6 +7,7 @@ import type { Cube, CubeVariables, HookContext } from '@bitsquare/nopy-cubes';
 import { getLogger } from '@logtape/logtape';
 import type { Variables } from '../nopy.common.js';
 import type { NopyConfig } from '../nopy.config.js';
+import { NopyUsageError } from '../nopy.errors.js';
 import type { DeployCall } from '../nopy.executor.js';
 import { VariableAssignment } from '../nopy.prompts.js';
 import type { CubeSession, NopySession } from '../nopy.session.js';
@@ -45,21 +46,33 @@ export class BuildContext {
   }
 
   /**
-   * Fails a non-interactive run that cannot fill a required variable.
+   * Fails a run that cannot fill a required variable.
    *
    * Without this the cube would be deployed with the key simply absent from
-   * `--data`, and the deploy script would read `None` off `host.data`.
+   * `--data`, and the deploy script would read `None` off `host.data` — against
+   * the documented guarantee that every schema key reaches it.
+   *
+   * Runs on the interactive path too, not only under `--use-defaults`. A prompt
+   * is not proof of an answer: a terminal that misreports its size renders an
+   * empty form and submits `{}` without the user seeing a field, which is
+   * exactly how this was found.
    */
   private assertVariablesComplete(cube: Cube): void {
     const missing = this.missingRequired(cube);
     if (missing.length === 0) return;
 
-    const [one, them] =
-      missing.length === 1 ? ['has no default value', 'it'] : ['have no default values', 'them'];
-    throw new Error(
-      `Cube "${cube.id}" cannot run with --use-defaults: ${missing.join(', ')} ${one}. ` +
-        `Set ${them} under "env" in .nopyrc.json, pass ${them} from a dependency, ` +
-        'or drop --use-defaults to be prompted.'
+    const list = missing.join(', ');
+    const them = missing.length === 1 ? 'it' : 'them';
+    const have = missing.length === 1 ? 'has no default value' : 'have no default values';
+
+    throw new NopyUsageError(
+      this.options.useDefaults
+        ? `Cube "${cube.id}" cannot run with --use-defaults: ${list} ${have}. ` +
+            `Set ${them} under "env" in .nopyrc.json, pass ${them} from a dependency, ` +
+            'or drop --use-defaults to be prompted.'
+        : `Cube "${cube.id}" is missing ${list}. Nothing supplied ${them} — the form may have ` +
+            `been submitted empty. Re-run and fill ${them} in, or set ${them} under "env" ` +
+            'in .nopyrc.json.'
     );
   }
 
@@ -81,23 +94,39 @@ export class BuildContext {
     if (gaps.length === 0) return;
 
     if (this.options.useDefaults) {
-      throw new Error(
-        `Cube "${cube.id}" cannot be replayed with --use-defaults: ${gaps.join(', ')} ` +
-          'would have to be entered. Secrets are never recorded in a session. ' +
-          'Replay without --use-defaults, or set the values under "env" in .nopyrc.json.'
-      );
+      // A gap is only a gap if nothing outside the session filled it. `env` and
+      // `param` both say deliberately what the value is, which is exactly what
+      // the old message told the user to do — and then failed anyway.
+      //
+      // `default` is not accepted here. The session dropped the secret on
+      // purpose, so falling through to a manifest default would deploy a
+      // different credential than the run being replayed, without saying so.
+      const unsatisfied = gaps.filter((key) => {
+        const origin = this.variables.of(cube.id, key)?.origin;
+        return origin !== 'env' && origin !== 'param';
+      });
+
+      if (unsatisfied.length > 0) {
+        const them = unsatisfied.length === 1 ? 'it' : 'them';
+        const secret = unsatisfied.some((key) => cube.secrets.includes(key));
+        throw new NopyUsageError(
+          `Cube "${cube.id}" cannot be replayed with --use-defaults: ` +
+            `${unsatisfied.join(', ')} would have to be entered. ` +
+            (secret ? 'Secrets are never recorded in a session. ' : '') +
+            `Set ${them} under "env" in .nopyrc.json` +
+            (secret ? ' (a schema default is not accepted for a secret)' : '') +
+            `, pass ${them} from a dependency, or replay without --use-defaults.`
+        );
+      }
+      return;
     }
 
     log.debug('Filling session gaps', { cubeId: cube.id, gaps });
     await VariableAssignment(cube, this.variables, { keys: gaps });
 
-    // A cancelled form leaves the run short of a value it cannot invent.
-    const stillMissing = this.missingRequired(cube);
-    if (stillMissing.length > 0) {
-      throw new Error(
-        `Cube "${cube.id}" is missing ${stillMissing.join(', ')} and cannot be deployed.`
-      );
-    }
+    // A form that resolved is not a form that was answered — same check, and
+    // the same reason for it, as the interactive path.
+    this.assertVariablesComplete(cube);
   }
 
   /**
@@ -110,15 +139,19 @@ export class BuildContext {
   ): Promise<void> {
     const cube = this.allCubes[cubeId];
     if (!cube) {
-      throw new Error(`Cube not found: ${cubeId}`);
+      throw new NopyUsageError(`Cube not found: ${cubeId}`);
     }
 
     log.debug('Resolving cube', { cubeId, host });
 
-    // 1. Declare secrets, then assign overrides and defaults. Declaring first
-    //    means even the config `env` seeded on the cube's first assignment is
-    //    already marked, so nothing reaches a session or a log unredacted.
+    // 1. Declare secrets and schema, then assign overrides and defaults. Both
+    //    declarations have to come first: the cube's first assignment is what
+    //    seeds the config `env` onto it, and by then it must already be known
+    //    which of those keys are secret (so nothing reaches a session or a log
+    //    unredacted) and which the cube actually declares (so a secret it does
+    //    not declare is never seeded at all).
     this.variables.declareSecrets(cubeId, cube.secrets);
+    this.variables.declareSchema(cubeId, cube.schemaKeys());
     if (Object.keys(overrides).length > 0) {
       this.variables.assign(cubeId, 'param', overrides);
     }
@@ -136,6 +169,7 @@ export class BuildContext {
       this.assertVariablesComplete(cube);
     } else {
       await VariableAssignment(cube, this.variables);
+      this.assertVariablesComplete(cube);
     }
 
     const currentVars = this.variables.get(cubeId);

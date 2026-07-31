@@ -125,3 +125,53 @@ describe('BuildContext.resolveCube', () => {
     expect(context.deployCalls.map((c) => c.cube)).toEqual(['cube-a', 'cube-b', 'cube-c']);
   });
 });
+
+describe('deploy order across several selected cubes', () => {
+  // `nopy.main.ts` walks `workflow.selectedCubes` and calls `resolveCube` once
+  // per entry, so the order that list arrives in is the order the loop visits.
+  // Emission is post-order, though, so a declared edge is honoured whichever way
+  // round the two cubes were listed — the recursion *is* the topological sort,
+  // and these pin that rather than leaving it to be inferred from the one-root
+  // cases above.
+  async function resolveAll(cubes: Record<string, Cube>, selected: string[]): Promise<string[]> {
+    const context = new BuildContext(
+      cubes,
+      new Variables(),
+      { cubes: [] } as any,
+      {
+        env: {},
+      } as any,
+      { method: 'ssh' }
+    );
+
+    for (const id of selected) await context.resolveCube(id, 'host1');
+
+    return context.deployCalls.map((c) => c.cube);
+  }
+
+  it('emits a dependency first even when it is selected last', async () => {
+    const cubes = {
+      'cube-a': createTestCube('cube-a'),
+      'cube-b': createTestCube('cube-b', () => ['cube-a']),
+    };
+
+    // The list order is the inversion of the dependency: b depends on a, and a
+    // is named after it. Resolving b still drags a in ahead of itself, and the
+    // second visit is deduped rather than re-emitted at the tail.
+    expect(await resolveAll(cubes, ['cube-b', 'cube-a'])).toEqual(['cube-a', 'cube-b']);
+    expect(await resolveAll(cubes, ['cube-a', 'cube-b'])).toEqual(['cube-a', 'cube-b']);
+  });
+
+  it('interleaves an unrelated cube by list order and nothing else', async () => {
+    // With no edge between them there is nothing to sort on, so `cube-z` lands
+    // where the list put it. That is the whole of what selection order decides.
+    const cubes = {
+      'cube-a': createTestCube('cube-a'),
+      'cube-b': createTestCube('cube-b', () => ['cube-a']),
+      'cube-z': createTestCube('cube-z'),
+    };
+
+    expect(await resolveAll(cubes, ['cube-z', 'cube-b'])).toEqual(['cube-z', 'cube-a', 'cube-b']);
+    expect(await resolveAll(cubes, ['cube-b', 'cube-z'])).toEqual(['cube-a', 'cube-b', 'cube-z']);
+  });
+});

@@ -4,6 +4,9 @@
 # anyway (see the Vagrantfile).
 .vagrant-hostkeys
 .python-version
+# The pty drivers under scripts/ import each other, so running one leaves a
+# bytecode cache next to them.
+__pycache__/
 
 node_modules
 cache

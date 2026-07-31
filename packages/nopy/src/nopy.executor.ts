@@ -143,20 +143,8 @@ async function executeCall(call: DeployCall): Promise<ExecutionResult> {
  * Outputs the execution plan without running (dry run)
  *
  * @param calls - Array of deployment calls
- * @param asJson - Output as JSON instead of text
  */
-export function outputExecutionPlan(calls: DeployCall[], asJson?: boolean): void {
-  if (asJson) {
-    const plan = calls.map((call) => ({
-      cube: call.cube,
-      host: call.host,
-      command: maskCommand(call),
-      variables: maskVariables(call),
-    }));
-    console.log(JSON.stringify({ plan }, null, 2));
-    return;
-  }
-
+export function outputExecutionPlan(calls: DeployCall[]): void {
   console.log('\n=== Execution Plan (Dry Run) ===\n');
 
   for (let i = 0; i < calls.length; i++) {

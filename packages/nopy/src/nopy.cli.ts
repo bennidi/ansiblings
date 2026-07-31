@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { loadConfig } from './nopy.config.js';
+import { reportError } from './nopy.errors.js';
 import { exitWithFarewell, installGracefulExit, isCancellation } from './nopy.exit.js';
 import {
   clearHistory,
@@ -33,8 +34,8 @@ const { version, buildInfo } = createRequire(import.meta.url)('../package.json')
 const versionLabel = buildInfo?.commit ? `${version} (${buildInfo.commit})` : version;
 
 /**
- * Prints the update hint to stderr, so it never lands in `--json` output or in
- * a `--print-only` command list being piped somewhere.
+ * Prints the update hint to stderr, so it never lands in a `--print-only`
+ * command list being piped somewhere.
  */
 async function printUpdateNotice(): Promise<void> {
   const notice = await updateNotice({ currentVersion: version });
@@ -67,6 +68,9 @@ Examples:
   $ nopy history              List all saved sessions
   $ nopy clear-history        Clear session history
 
+  Every flag above belongs to 'install', the default command — 'nopy -R' is
+  'nopy install -R'. Run 'nopy install --help' for the full list.
+
 Session Replay:
   Sessions are automatically saved to history after each deployment.
   Use 'nopy history' to see available sessions and their IDs.
@@ -88,16 +92,19 @@ program
   .option('-n, --dry-run', 'Show execution plan without running')
   .option('-P, --print-only', 'Print deploy commands and exit (no execution)')
   .option('-c, --continue-on-error', 'Continue executing after failures')
-  .option('-j, --json', 'Output results as JSON')
   .option('--no-history', 'Do not save this session to history')
   .action(async (options) => {
     await printUpdateNotice();
 
-    // Loaded lazily so that --help/--version work outside a configured project.
-    const execConfig = loadConfig().execution ?? {};
-    const continueOnError = options.continueOnError ?? execConfig.continueOnError ?? false;
-
     try {
+      // Loaded lazily so that --help/--version work outside a configured
+      // project — and inside the try, so that "no .nopyrc.json here" is
+      // reported by `reportError` rather than escaping as an unhandled
+      // rejection and printing node's own stack. It is the likeliest first-run
+      // mistake there is.
+      const execConfig = loadConfig().execution ?? {};
+      const continueOnError = options.continueOnError ?? execConfig.continueOnError ?? false;
+
       // Handle session replay
       const loadSessionPath = options.loadSession;
       let sessionToReplay: { session: import('./nopy.session.js').NopySession } | undefined;
@@ -109,7 +116,9 @@ program
           process.exit(1);
         }
         sessionToReplay = lastEntry;
-        console.log(`Repeating: ${lastEntry.name}\n`);
+        // stderr, like everything nopy says about itself — `-R --print-only` has
+        // to leave stdout to the commands.
+        console.error(`Repeating: ${lastEntry.name}\n`);
       } else if (options.history) {
         const entry = getSessionById(options.history);
         if (!entry) {
@@ -118,7 +127,7 @@ program
           process.exit(1);
         }
         sessionToReplay = entry;
-        console.log(`Running: ${entry.name}\n`);
+        console.error(`Running: ${entry.name}\n`);
       }
 
       const result = await nopy({
@@ -130,7 +139,6 @@ program
         dryRun: options.dryRun,
         printOnly: options.printOnly,
         continueOnError,
-        jsonOutput: options.json,
         saveToHistory: options.history !== false && !options.dryRun,
       });
 
@@ -144,20 +152,7 @@ program
       // the process-level handler.
       if (isCancellation(error)) exitWithFarewell();
 
-      if (options.json) {
-        console.log(
-          JSON.stringify(
-            {
-              success: false,
-              error: error instanceof Error ? error.message : String(error),
-            },
-            null,
-            2
-          )
-        );
-      } else {
-        console.error('Error:', error instanceof Error ? error.message : error, error);
-      }
+      reportError(error);
       process.exit(1);
     }
   });

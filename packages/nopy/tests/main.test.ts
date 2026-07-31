@@ -48,7 +48,12 @@ vi.mock('../src/cubes/index.js', () => ({ loadCubes }));
 vi.mock('../src/nopy.config.js', () => ({ loadConfig, getConfigPaths }));
 vi.mock('../src/nopy.workflow.js', () => ({ runWorkflow }));
 vi.mock('../src/nopy.history.js', () => ({ addToHistory, DEFAULT_HISTORY_SIZE: 10 }));
-vi.mock('../src/nopy.session.js', () => ({ saveSession }));
+// Only the writer is a spy — `describeSession` and the version constant are pure
+// and the assertions below are about what nopy() actually stamps.
+vi.mock('../src/nopy.session.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/nopy.session.js')>()),
+  saveSession,
+}));
 vi.mock('../src/cubes/dependencies.js', () => ({
   BuildContext: class {
     resolveCube = resolveCube;
@@ -67,16 +72,17 @@ vi.mock('../src/nopy.executor.js', async (importOriginal) => {
 
 import { nopy } from '../src/nopy.main.js';
 
-const session = (): NopySession =>
-  ({
-    version: '1.0',
-    name: 'test',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    cubes: [],
-    hosts: ['web-1'],
-    auth: { method: 'ssh-key' },
-    env: {},
-  }) as NopySession;
+/**
+ * A session as bare as the loader will accept one — no `version`, `timestamp`
+ * or `name`, which is exactly what a hand-written file looks like and what
+ * `nopy()` has to fill in.
+ */
+const session = (): NopySession => ({
+  cubes: [],
+  hosts: ['web-1'],
+  auth: { method: 'ssh-key' },
+  env: {},
+});
 
 const call = (cube: string): DeployCall => ({
   cube,
@@ -88,10 +94,12 @@ const call = (cube: string): DeployCall => ({
 });
 
 let logSpy: ReturnType<typeof vi.spyOn>;
+let errSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
   state.config = { hosts: ['web-1'], cubeDirs: [], cubePackages: [], env: {} };
   state.loadResult = { cubes: { 'cube-a': {} }, errors: [] };
@@ -102,14 +110,19 @@ beforeEach(() => {
     session: session(),
     selectedCubes: ['cube-a'],
     authMethod: 'ssh-key',
-    isReplay: false,
+    replaySource: undefined,
   });
   executeDeployCalls.mockResolvedValue([
     { cube: 'cube-a', host: 'web-1', success: true, duration: 10 },
   ]);
 });
 
-const output = () => logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+/**
+ * The two streams, kept apart on purpose: stdout carries the deploy commands
+ * and pyinfra's own output, everything nopy says about itself goes to stderr.
+ */
+const stdout = () => logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+const stderr = () => errSpy.mock.calls.map((c) => c.join(' ')).join('\n');
 
 describe('nopy', () => {
   it('runs the happy path and reports success', async () => {
@@ -141,7 +154,7 @@ describe('nopy', () => {
       session: { ...session(), hosts: ['web-1', 'web-2'] },
       selectedCubes: ['cube-a', 'cube-b'],
       authMethod: 'ssh-key',
-      isReplay: false,
+      replaySource: undefined,
     });
 
     await nopy();
@@ -159,13 +172,13 @@ describe('nopy', () => {
       expect(runWorkflow).not.toHaveBeenCalled();
     });
 
-    it('emits the errors as JSON when jsonOutput is set', async () => {
+    it('reports them on stderr', async () => {
       state.loadResult = { cubes: {}, errors: ['bad manifest'] };
 
-      await nopy({ jsonOutput: true });
+      await nopy();
 
-      const payload = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string);
-      expect(payload).toEqual({ success: false, errors: ['bad manifest'] });
+      expect(stderr()).toContain('bad manifest');
+      expect(stdout()).toBe('');
     });
   });
 
@@ -180,7 +193,7 @@ describe('nopy', () => {
 
       await nopy({ continueOnError: true });
 
-      const text = output();
+      const text = stderr();
       expect(text).toContain('Configuration');
       expect(text).toContain('Hosts:');
       expect(text).toContain('Cube dirs:');
@@ -198,7 +211,7 @@ describe('nopy', () => {
 
       await nopy();
 
-      const text = output();
+      const text = stderr();
       expect(text).toContain('Configuration');
       expect(text).not.toContain('Hosts:');
       expect(text).not.toContain('Cube dirs:');
@@ -215,25 +228,20 @@ describe('nopy', () => {
 
       await nopy();
 
-      const text = output();
+      const text = stderr();
       expect(text).toContain('~/.nopyrc.json');
       expect(text).toContain('./.nopyrc.json');
       expect(text).toContain('/etc/nopy/.nopyrc.json');
     });
 
-    it('is suppressed for JSON output', async () => {
-      await nopy({ jsonOutput: true });
-      expect(output()).not.toContain('Configuration');
-    });
-
     it('is suppressed when replaying a session object', async () => {
       await nopy({ replaySession: session() });
-      expect(output()).not.toContain('Configuration');
+      expect(stderr()).not.toContain('Configuration');
     });
 
     it('is suppressed when replaying a session file', async () => {
       await nopy({ loadSession: '/tmp/s.json' });
-      expect(output()).not.toContain('Configuration');
+      expect(stderr()).not.toContain('Configuration');
     });
   });
 
@@ -247,17 +255,57 @@ describe('nopy', () => {
       expect(written.cubes).toEqual(state.cubeSessions);
     });
 
-    it('does not save a replayed session back to file', async () => {
+    it('leaves a declared secret out of the recorded env', async () => {
+      // The session's `env` is a copy of the config's, and used to be copied
+      // verbatim — writing to disk, in plaintext, the credential that was kept
+      // out of every cube's `variables` one key below.
+      state.config = {
+        ...state.config,
+        env: { PASSWORD: 'hunter2', KEY_DIR: './vault' },
+        secrets: ['PASSWORD'],
+      };
+
+      await nopy({ saveSession: '/tmp/out.json' });
+
+      expect(saveSession.mock.calls[0][0].env).toEqual({ KEY_DIR: './vault' });
+    });
+
+    it('saves a replayed session too', async () => {
       runWorkflow.mockResolvedValue({
         session: session(),
         selectedCubes: ['cube-a'],
         authMethod: 'ssh-key',
-        isReplay: true,
+        replaySource: 'history',
       });
 
       await nopy({ saveSession: '/tmp/out.json' });
 
-      expect(saveSession).not.toHaveBeenCalled();
+      expect(saveSession).toHaveBeenCalledTimes(1);
+      expect(saveSession.mock.calls[0][1]).toBe('/tmp/out.json');
+    });
+
+    it('stamps version, timestamp and a derived name', async () => {
+      await nopy({ saveSession: '/tmp/out.json' });
+
+      const [written] = saveSession.mock.calls[0];
+      expect(written.version).toBe('1.0.0');
+      expect(written.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(written.name).toContain('cube-a');
+      expect(written.name).toContain('web-1');
+    });
+
+    it('keeps the name and version a replayed session already carried', async () => {
+      runWorkflow.mockResolvedValue({
+        session: { ...session(), version: '0.9.0', name: 'hand-written', timestamp: 'then' },
+        selectedCubes: ['cube-a'],
+        authMethod: 'ssh-key',
+        replaySource: 'file',
+      });
+
+      await nopy({ saveSession: '/tmp/out.json' });
+
+      const [written] = saveSession.mock.calls[0];
+      expect(written).toMatchObject({ version: '0.9.0', name: 'hand-written', timestamp: 'then' });
     });
 
     it('does not save when no path is given', async () => {
@@ -300,17 +348,30 @@ describe('nopy', () => {
       expect(addToHistory).not.toHaveBeenCalled();
     });
 
-    it('skips history for a replay', async () => {
+    it('skips history for a replay out of history', async () => {
       runWorkflow.mockResolvedValue({
         session: session(),
         selectedCubes: ['cube-a'],
         authMethod: 'ssh-key',
-        isReplay: true,
+        replaySource: 'history',
       });
 
       await nopy();
 
       expect(addToHistory).not.toHaveBeenCalled();
+    });
+
+    it('records a replay out of a session file', async () => {
+      runWorkflow.mockResolvedValue({
+        session: session(),
+        selectedCubes: ['cube-a'],
+        authMethod: 'ssh-key',
+        replaySource: 'file',
+      });
+
+      await nopy();
+
+      expect(addToHistory).toHaveBeenCalledTimes(1);
     });
 
     it('skips history when nothing would be deployed', async () => {
@@ -320,17 +381,34 @@ describe('nopy', () => {
 
       expect(addToHistory).not.toHaveBeenCalled();
     });
+
+    it('skips history for a print-only run', async () => {
+      // Same rule as `--dry-run`: nothing was deployed, so nothing belongs at
+      // the head of the list `-R` repeats.
+      await nopy({ printOnly: true });
+
+      expect(addToHistory).not.toHaveBeenCalled();
+    });
   });
 
   describe('printOnly', () => {
     it('prints commands and never executes', async () => {
       await nopy({ printOnly: true });
 
-      const text = output();
+      const text = stdout();
       expect(text).toContain('Deploy Commands');
       expect(text).toContain('# cube-a -> web-1');
       expect(text).toContain('pyinfra web-1 -y cube-a.deploy.py');
       expect(executeDeployCalls).not.toHaveBeenCalled();
+    });
+
+    it('keeps stdout to the commands and nothing else', async () => {
+      // The whole point of the split: `nopy -P > plan.txt` has to be the plan.
+      // The config banner and every log line are on the other stream.
+      await nopy({ printOnly: true });
+
+      expect(stdout()).not.toContain('Configuration');
+      expect(stderr()).toContain('Configuration');
     });
 
     it('reports the command count as the summary total', async () => {
@@ -359,17 +437,9 @@ describe('nopy', () => {
       const [, options] = executeDeployCalls.mock.calls[0];
       options.onProgress({ cube: 'cube-a', host: 'web-1', success: true }, 1, 1);
       options.onProgress({ cube: 'cube-b', host: 'web-1', success: false }, 1, 1);
-      // Exercises both the ✓ and ✗ branches; logtape writes via console.log.
-      expect(logSpy).toHaveBeenCalled();
-    });
-
-    it('stays silent on progress when jsonOutput is set', async () => {
-      await nopy({ jsonOutput: true });
-
-      const [, options] = executeDeployCalls.mock.calls[0];
-      const before = logSpy.mock.calls.length;
-      options.onProgress({ cube: 'cube-a', host: 'web-1', success: true }, 1, 1);
-      expect(logSpy.mock.calls.length).toBe(before);
+      // Exercises both the ✓ and ✗ branches; logtape writes via console.error.
+      expect(stderr()).toContain('cube-a');
+      expect(stderr()).toContain('cube-b');
     });
   });
 });

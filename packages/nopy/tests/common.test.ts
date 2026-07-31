@@ -200,4 +200,67 @@ describe('Variables secrets', () => {
     expect(variables.persistable('cube-a')).toEqual({});
     expect(variables.persistable('cube-b')).toEqual({ PASSWORD: 'b' });
   });
+
+  it('excludes a declared secret from the env a session records', () => {
+    const variables = new Variables({ PASSWORD: 'hunter2', KEY_DIR: './vault' }, ['PASSWORD']);
+
+    expect(variables.persistableEnv()).toEqual({ KEY_DIR: './vault' });
+  });
+
+  it('records an env with no secrets in it whole', () => {
+    const variables = new Variables({ KEY_DIR: './vault' }, ['PASSWORD']);
+
+    expect(variables.persistableEnv()).toEqual({ KEY_DIR: './vault' });
+  });
+});
+
+describe('Variables globally declared secrets', () => {
+  /** `env` carrying a key that cube-a declares secret and cube-b knows nothing of. */
+  const withLeakyEnv = () => {
+    const variables = new Variables({ PASSWORD: 'wildpass123', KEY_DIR: '/vault' }, ['PASSWORD']);
+    variables.declareSecrets('cube-a', ['PASSWORD']);
+    variables.declareSchema('cube-a', ['USER', 'PASSWORD']);
+    variables.declareSchema('cube-b', ['PORT']);
+    return variables;
+  };
+
+  it('does not seed a secret onto a cube that does not declare it', () => {
+    const variables = withLeakyEnv();
+    variables.assign('cube-b', 'default', { PORT: 22 });
+
+    expect(variables.get('cube-b')).not.toHaveProperty('PASSWORD');
+    expect(variables.of('cube-b', 'PASSWORD')).toBeUndefined();
+  });
+
+  it('still seeds it onto a cube whose schema declares it', () => {
+    const variables = withLeakyEnv();
+    variables.assign('cube-a', 'default', {});
+
+    expect(variables.get('cube-a').PASSWORD).toBe('wildpass123');
+    expect(variables.of('cube-a', 'PASSWORD')?.origin).toBe('env');
+    expect(variables.persistable('cube-a')).not.toHaveProperty('PASSWORD');
+  });
+
+  it('keeps broadcasting an undeclared key that is not a secret', () => {
+    // ssh:keyman reads KEY_DIR off host.data without declaring it in its schema.
+    const variables = withLeakyEnv();
+    variables.assign('cube-b', 'default', {});
+
+    expect(variables.get('cube-b').KEY_DIR).toBe('/vault');
+  });
+
+  it('redacts a global secret on a cube whose own manifest forgot to list it', () => {
+    const variables = new Variables({}, ['PASSWORD']);
+    variables.assign('cube-b', 'prompt', { PASSWORD: 'typed' });
+
+    expect(variables.of('cube-b', 'PASSWORD')?.redacted).toBe(true);
+    expect(variables.persistable('cube-b')).toEqual({});
+  });
+
+  it('treats a cube that declared no schema as declaring nothing', () => {
+    const variables = new Variables({ PASSWORD: 'p' }, ['PASSWORD']);
+    variables.assign('cube-z', 'default', {});
+
+    expect(variables.get('cube-z')).toEqual({});
+  });
 });

@@ -193,6 +193,18 @@ export class Cube<Schema extends AnyObjectSchema = AnyObjectSchema> {
   }
 
   /**
+   * Every key the schema declares, required or not.
+   *
+   * The question this answers is "does this cube claim to know about KEY", which
+   * is not the same as "does it have a value for it" — a cube can read a key off
+   * `host.data` that only the config `env` supplies. That distinction is what
+   * decides whether a secret is allowed to travel to it.
+   */
+  schemaKeys(): string[] {
+    return Object.keys(this.manifest.schema.shape);
+  }
+
+  /**
    * Schema keys that have to be supplied from somewhere: no `.default()`, and
    * not optional. Nothing else can fill them in, so a run that cannot prompt
    * has to fail rather than deploy a cube with the value missing.

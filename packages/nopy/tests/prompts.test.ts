@@ -55,11 +55,27 @@ const question = (name: string) => questions().find((q) => q.name === name);
 /** Grabs the options the last enquirer AutoComplete prompt was constructed with. */
 const autoComplete = () => autoCompleteCtor.mock.calls.at(-1)?.[0] as Record<string, any>;
 
+/** Grabs the options the last enquirer Form prompt was constructed with. */
+const formOptions = () => formCtor.mock.calls.at(-1)?.[0] as Record<string, any>;
+
 /** Grabs the choices the last enquirer Form prompt was constructed with. */
-const formChoices = () => {
-  const options = formCtor.mock.calls.at(-1)?.[0] as { choices: Record<string, any>[] };
-  return options.choices;
-};
+const formChoices = () => formOptions().choices as Record<string, any>[];
+
+/** Runs `body` with the terminal reporting the given size, then puts it back. */
+async function withTerminal(
+  size: { rows: number; columns: number },
+  body: () => Promise<void>
+): Promise<void> {
+  const was = { rows: process.stdout.rows, columns: process.stdout.columns };
+  Object.defineProperty(process.stdout, 'rows', { value: size.rows, configurable: true });
+  Object.defineProperty(process.stdout, 'columns', { value: size.columns, configurable: true });
+  try {
+    await body();
+  } finally {
+    Object.defineProperty(process.stdout, 'rows', { value: was.rows, configurable: true });
+    Object.defineProperty(process.stdout, 'columns', { value: was.columns, configurable: true });
+  }
+}
 
 const cube = (id: string, name: string, schema = z.object({})) =>
   new Cube(Manifest({ id, name, schema }), `/cubes/${id}`, 'deploy.py');
@@ -113,24 +129,42 @@ describe('CubeSelection', () => {
 
   it('derives page size from the terminal height', async () => {
     autoCompleteRun.mockResolvedValue([]);
-    const rows = process.stdout.rows;
 
-    Object.defineProperty(process.stdout, 'rows', { value: 40, configurable: true });
-    await CubeSelection(cubes);
-    expect(autoComplete().limit).toBe(35);
+    await withTerminal({ rows: 40, columns: 200 }, async () => {
+      await CubeSelection(cubes);
+      expect(autoComplete().limit).toBe(35);
+    });
 
-    // Falls back to a floor of 10 on a short (or unknown) terminal.
-    Object.defineProperty(process.stdout, 'rows', { value: 0, configurable: true });
-    await CubeSelection(cubes);
-    expect(autoComplete().limit).toBe(19);
-
-    Object.defineProperty(process.stdout, 'rows', { value: rows, configurable: true });
+    // A terminal reporting nothing is floored, not believed.
+    await withTerminal({ rows: 0, columns: 0 }, async () => {
+      await CubeSelection(cubes);
+      expect(autoComplete().limit).toBe(19);
+    });
   });
 
-  it('selects nothing when the user cancels', async () => {
+  it('hands the prompt a window size it can render into', async () => {
+    autoCompleteRun.mockResolvedValue([]);
+
+    // Passing `rows` is what keeps enquirer away from its own `utils.height`,
+    // which overwrites a good fallback with `getWindowSize()[1]` — zero here.
+    await withTerminal({ rows: 0, columns: 0 }, async () => {
+      await CubeSelection(cubes);
+      expect(autoComplete()).toMatchObject({ rows: 24, columns: 80 });
+    });
+
+    await withTerminal({ rows: 50, columns: 200 }, async () => {
+      await CubeSelection(cubes);
+      expect(autoComplete()).toMatchObject({ rows: 50, columns: 200 });
+    });
+  });
+
+  it('lets a cancellation travel instead of returning an empty selection', async () => {
+    // An empty selection is a legitimate answer, so swallowing the rejection
+    // here made "the user backed out" and "the user picked nothing" the same
+    // event and let the run continue to deploy zero cubes.
     autoCompleteRun.mockRejectedValue(new Error('cancelled'));
 
-    await expect(CubeSelection(cubes)).resolves.toEqual({ selectedCubes: [] });
+    await expect(CubeSelection(cubes)).rejects.toThrow('cancelled');
   });
 });
 
@@ -418,13 +452,31 @@ describe('VariableAssignment', () => {
     expect(variables.get('svc').extra).toBe('kept');
   });
 
-  it('assigns nothing when the user cancels the form', async () => {
+  it('hands the form a window size it can render into', async () => {
+    const variables = new Variables();
+    formRun.mockResolvedValue({});
+
+    // The form is where a zero height actually costs something: enquirer
+    // renders `Math.min(limit, height)` fields, so a 0-row terminal shows none
+    // of them and submits `{}` without the user ever seeing the questions.
+    await withTerminal({ rows: 0, columns: 0 }, async () => {
+      await VariableAssignment(cube('svc', 'Service', schema), variables);
+      expect(formOptions()).toMatchObject({ rows: 24, columns: 80 });
+    });
+
+    await withTerminal({ rows: 50, columns: 200 }, async () => {
+      await VariableAssignment(cube('svc', 'Service', schema), variables);
+      expect(formOptions()).toMatchObject({ rows: 50, columns: 200 });
+    });
+  });
+
+  it('lets a cancelled form travel rather than assigning nothing', async () => {
     const variables = new Variables();
     formRun.mockRejectedValue(new Error('cancelled'));
 
-    await expect(
-      VariableAssignment(cube('svc', 'Service', schema), variables)
-    ).resolves.toBeUndefined();
+    await expect(VariableAssignment(cube('svc', 'Service', schema), variables)).rejects.toThrow(
+      'cancelled'
+    );
     expect(variables.get('svc')).toEqual({});
   });
 

@@ -15,11 +15,16 @@ import {
   summarizeResults,
 } from './nopy.executor.js';
 import { addToHistory, DEFAULT_HISTORY_SIZE } from './nopy.history.js';
-import { type NopySession, saveSession } from './nopy.session.js';
+import { describeSession, type NopySession, SESSION_VERSION, saveSession } from './nopy.session.js';
 import { runWorkflow } from './nopy.workflow.js';
 
 /**
- * Configures the logtape logger for console output
+ * Configures the logtape logger for console output.
+ *
+ * **stderr**, deliberately. stdout carries the deploy commands and pyinfra's own
+ * output; everything nopy says about itself goes to stderr, so `--print-only`
+ * can be piped somewhere. The sink used to write to stdout and was held back
+ * only by `--json`, which never worked and is gone.
  */
 function configureLogtape(): void {
   configure({
@@ -31,7 +36,7 @@ function configureLogtape(): void {
           if (typeof formatted === 'string') {
             const msg = formatted.replace(/\r?\n$/, '');
             const props = record.properties as Record<string, unknown>;
-            console.log(msg, ...Object.values(props));
+            console.error(msg, ...Object.values(props));
           }
         };
       })(),
@@ -55,7 +60,7 @@ function configureLogtape(): void {
 configureLogtape();
 
 /**
- * Prints the active configuration summary
+ * Prints the active configuration summary — to stderr, see {@link configureLogtape}.
  */
 function printActiveConfig(
   config: import('./nopy.config.js').NopyConfig,
@@ -92,7 +97,7 @@ function printActiveConfig(
   }
 
   lines.push('');
-  console.log(lines.join('\n'));
+  console.error(lines.join('\n'));
 }
 
 /**
@@ -107,7 +112,6 @@ export interface NopyOptions {
   dryRun?: boolean;
   printOnly?: boolean;
   continueOnError?: boolean;
-  jsonOutput?: boolean;
   saveToHistory?: boolean;
 }
 
@@ -138,24 +142,30 @@ export async function nopy(opts: NopyOptions = {}): Promise<NopyResult | undefin
     dryRun = false,
     printOnly = false,
     continueOnError = false,
-    jsonOutput = false,
     saveToHistory = true,
   } = opts;
 
   const log = getLogger(['nopy']);
   const config = loadConfig();
 
-  if (!jsonOutput && !replaySession && !loadSessionPath) {
+  if (!replaySession && !loadSessionPath) {
     printActiveConfig(config, { continueOnError });
   }
 
   const { cubes, errors } = await loadCubes();
-  const variables = new Variables(config.env);
+
+  // Every key any manifest calls a secret, plus the config's own list. Computed
+  // before the first cube resolves, so which cube happens to run first cannot
+  // change whether a credential is treated as one.
+  const declaredSecrets = new Set([
+    ...Object.values(cubes).flatMap((cube) => cube.secrets),
+    ...(config.secrets ?? []),
+  ]);
+  const variables = new Variables(config.env, declaredSecrets);
 
   if (errors.length > 0) {
     log.error('Errors found during cube loading:');
     for (const error of errors) log.error(error);
-    if (jsonOutput) console.log(JSON.stringify({ success: false, errors }, null, 2));
     return undefined;
   }
 
@@ -180,7 +190,7 @@ export async function nopy(opts: NopyOptions = {}): Promise<NopyResult | undefin
     },
     {
       useDefaults,
-      isSessionReplay: workflow.isReplay,
+      isSessionReplay: workflow.replaySource !== undefined,
     }
   );
 
@@ -190,17 +200,43 @@ export async function nopy(opts: NopyOptions = {}): Promise<NopyResult | undefin
     }
   }
 
+  // The default name needs the resolved cube list, which does not exist until
+  // the build has run — so it is filled in here rather than in `createSession`,
+  // and only when nothing supplied one. `version` sits before the spread so that
+  // a replayed session keeps whatever its file declared; a hand-written session
+  // that declared none of the three gets all three.
+  const timestamp = workflow.session.timestamp ?? new Date().toISOString();
   const sessionForSaving: NopySession = {
+    version: SESSION_VERSION,
     ...workflow.session,
+    timestamp,
     cubes: context.cubeSessions,
-    env: config.env,
+    // Not `config.env` — a declared secret in there would be written to the
+    // session file in plaintext, one key above the `variables` it was carefully
+    // kept out of.
+    env: variables.persistableEnv(),
   };
+  sessionForSaving.name ??= describeSession(sessionForSaving, timestamp);
 
-  if (saveSessionPath && !workflow.isReplay) {
+  // Saved on a replay too: the resolved cube set is exactly what was asked for,
+  // and a session written from a replay is no less valid than one written from a
+  // fresh run. The old `!isReplay` guard made `nopy install -R -s out.json` exit
+  // 0 having written nothing.
+  if (saveSessionPath) {
     saveSession(sessionForSaving, saveSessionPath);
   }
 
-  if (saveToHistory && !dryRun && !workflow.isReplay && context.deployCalls.length > 0) {
+  // A `-R`/`-H` replay is already in history and re-recording it would push the
+  // original out of the list. A `--load-session` run is not in history at all,
+  // so unless it is recorded here, `nopy history` reports nothing afterwards and
+  // `-R` has nothing to repeat.
+  const recordable = workflow.replaySource !== 'history';
+
+  // `--print-only` is excluded for the same reason `--dry-run` is: neither
+  // deployed anything, and history is what `-R` repeats. Recording a run that
+  // never happened made `nopy install -P` — the safe look-before-you-leap flag —
+  // silently displace the last real deployment at the head of the list.
+  if (saveToHistory && !dryRun && !printOnly && recordable && context.deployCalls.length > 0) {
     const historySize = config.history?.maxSessions ?? DEFAULT_HISTORY_SIZE;
     if (config.history?.autoSave !== false) {
       addToHistory(sessionForSaving, historySize);
@@ -224,10 +260,8 @@ export async function nopy(opts: NopyOptions = {}): Promise<NopyResult | undefin
     dryRun,
     continueOnError,
     onProgress: (result, completed, total) => {
-      if (!jsonOutput) {
-        const status = result.success ? '✓' : '✗';
-        log.info(`[${completed}/${total}] ${status} ${result.cube} -> ${result.host}`);
-      }
+      const status = result.success ? '✓' : '✗';
+      log.info(`[${completed}/${total}] ${status} ${result.cube} -> ${result.host}`);
     },
   });
 

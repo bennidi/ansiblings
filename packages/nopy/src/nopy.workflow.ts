@@ -35,8 +35,18 @@ export interface WorkflowResult {
   username?: string;
   /** Password if applicable */
   password?: string;
-  /** Whether this is a session replay */
-  isReplay: boolean;
+  /**
+   * Where a replayed session came from, or `undefined` for a fresh interactive
+   * run.
+   *
+   * Was a boolean, which conflated two runs that need different treatment: a
+   * `-R`/`-H` replay is already in history and must not be recorded again, while
+   * a `--load-session` run is not in history at all — recording it is the only
+   * way `nopy history` and `-R` can see it afterwards. Everything that merely
+   * asks "am I replaying?" (reading values back off the session rather than
+   * prompting) takes `replaySource !== undefined`.
+   */
+  replaySource?: 'file' | 'history';
 }
 
 /**
@@ -83,7 +93,7 @@ export async function runInteractiveWorkflow(
     authMethod: authResult.authMethod,
     username: authResult.username,
     password: authResult.password,
-    isReplay: false,
+    replaySource: undefined,
   };
 }
 
@@ -141,7 +151,7 @@ export async function runReplayWorkflow(
     authMethod,
     username,
     password,
-    isReplay: true,
+    replaySource: 'file',
   };
 }
 
@@ -196,7 +206,7 @@ export async function runSessionReplayWorkflow(
     authMethod,
     username,
     password,
-    isReplay: true,
+    replaySource: 'history',
   };
 }
 

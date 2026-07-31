@@ -92,52 +92,7 @@ After deployment:
 - Oh My Fish provides package management: `omf install <package>`
 - To switch shells: `chsh -s /bin/bash` (or back to fish: `chsh -s /usr/bin/fish`)
 
----
-
-# 📌 Most Useful Fish Key Bindings (with Fisher Extensions)
-
-## 🐟 Default Fish Key Bindings
-
-- `Ctrl + C` → Cancel the current command  
-- `Ctrl + D` → Exit the shell (or logout if in SSH)  
-- `Ctrl + L` → Clear the terminal  
-- `Ctrl + R` → Search command history (enhanced by `fzf.fish`)  
-- `Ctrl + U` → Delete the entire command line  
-- `Ctrl + W` → Delete the last word  
-- `Alt + ← / →` → Move backward/forward by a word  
-
-## 🔍 Enhanced with `fzf.fish`
-
-- `Ctrl + R` → **Fuzzy search command history**  
-- `Ctrl + T` → **Fuzzy search and insert file path**  
-- `Alt + C` → **Fuzzy search directories (`cd` with `z`)**  
-
-## 📂 Directory Navigation (with `z`)
-
-- `z <dir>` → Jump to a frequently used directory  
-- `z -l` → List most-used directories  
-- `z -c` → Remove a directory from `z`'s database  
-
-## 🔄 Process & Job Management
-
-- `Ctrl + Z` → Suspend the current process  
-- `fg` → Bring a suspended process back to foreground  
-- `jobs` → List background jobs  
-
-## 🎨 Other Handy Shortcuts
-
-- `fish_vi_key_bindings` → Enable Vi mode (press `Esc` for normal mode)  
-- `Ctrl + G` → Show Git status (if using `fzf.fish`)  
-- `Ctrl + E` → Edit command line in `$EDITOR`  
-
-## ⚙️ Useful Commands for Key Binding
-
-```fish
-# Set Fish default key bindings
-fish_default_key_bindings
-
-# Enable Vi mode
-fish_vi_key_bindings
-
-# Rebind a custom key (Example: Ctrl + G for git status)
-bind \cg 'git status'
+Fish's own key bindings and the plugins this cube installs are documented
+upstream — `fish_key_reader` lists what is bound, and `omf help` what is
+installed. They used to be reproduced here at length, which is not something
+this cube knows anything about.

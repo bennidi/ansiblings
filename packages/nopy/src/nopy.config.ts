@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { TVariables } from './nopy.common.js';
+import { NopyUsageError } from './nopy.errors.js';
 
 /**
  * Log verbosity levels for pyinfra output
@@ -102,6 +103,14 @@ export interface NopyConfig {
   cubePackages: CubePackageRef[];
   /** Global environment variables */
   env: TVariables;
+  /**
+   * `env` keys to treat as sensitive even though no manifest says so.
+   *
+   * A manifest's own `secrets` list already covers the cubes that declare the
+   * key. This is for the value no cube declares at all — a token a hook reads,
+   * say — which would otherwise be broadcast and printed in the clear.
+   */
+  secrets?: string[];
   /** Logging configuration */
   log?: LogConfig;
   /** Session history configuration */
@@ -317,7 +326,7 @@ export function loadConfig(): NopyConfig {
   const configPaths = findConfigFiles();
 
   if (configPaths.length === 0) {
-    throw new Error(
+    throw new NopyUsageError(
       `No ${CONFIG_FILENAME} found. Create one in your project directory or any parent directory.`
     );
   }
@@ -334,7 +343,7 @@ export function loadConfig(): NopyConfig {
       config = mergeConfigs(config, resolvedConfig);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to load config ${configPath}: ${message}`);
+      throw new NopyUsageError(`Failed to load config ${configPath}: ${message}`);
     }
   }
 

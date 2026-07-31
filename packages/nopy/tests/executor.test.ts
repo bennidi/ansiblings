@@ -123,20 +123,6 @@ describe('outputExecutionPlan', () => {
     expect(output).toContain('host1');
   });
 
-  it('outputs JSON format when requested', () => {
-    const calls = [createTestCall('cube-a', 'host1')];
-
-    outputExecutionPlan(calls, true);
-
-    expect(consoleLogSpy).toHaveBeenCalledTimes(1);
-    const output = consoleLogSpy.mock.calls[0][0];
-    const parsed = JSON.parse(output);
-
-    expect(parsed.plan).toHaveLength(1);
-    expect(parsed.plan[0].cube).toBe('cube-a');
-    expect(parsed.plan[0].host).toBe('host1');
-  });
-
   it('masks variables the manifest declared secret', () => {
     const call: DeployCall = {
       ...createTestCall('cube-a', 'host1'),
