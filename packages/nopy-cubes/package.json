@@ -1,6 +1,6 @@
 {
   "name": "@bitsquare/nopy-cubes",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "Authoring types for nopy cubes: the Manifest factory and the Cube contract.",
   "keywords": [
     "nopy",

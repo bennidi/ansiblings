@@ -1,6 +1,6 @@
 {
   "name": "@bitsquare/nopy",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "A system to simplify pyinfra script management and execution.",
   "keywords": [
     "pyinfra",
