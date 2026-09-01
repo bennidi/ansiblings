@@ -1,8 +1,10 @@
-from pyinfra.operations import systemd
+from pyinfra.operations import server, systemd
 from pyinfra import host
 
 
 APP = host.data.APP
+SERVICE_NAME = host.data.SERVICE_NAME
+AUTOSTART = host.data.AUTOSTART
 
 # Enable and start the service based on AUTOSTART flag
 if AUTOSTART:

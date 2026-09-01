@@ -1,176 +1,61 @@
-# TypeStack Install Cube
+# autostart
 
-Deploys a Node.js/TypeScript application from a Git repository as a systemd service with Docker Compose and PM2 support.
+**Enable and start an existing systemd service**
 
-## Features
+## Purpose
 
-- Clones Git repository
-- Installs dependencies with Yarn
-- Builds the application
-- Starts Docker Compose services
-- Creates a systemd service for automatic startup
-- Configures PM2 for process management
-- Automatic restart on failure
+Takes a systemd unit that is already installed on the host and decides whether
+it runs: `systemctl enable` plus `systemctl start`, or neither.
 
-## Requirements
-
-- Git (for cloning repository)
-- Yarn (for dependency management)
-- Docker and Docker Compose
-- PM2 (for process management)
-- Node.js/NVM installed
-- SSH key access to the repository (if using private repos)
-
-## Configuration Parameters
-
-### Required
-
-- **USER**: System user to run the application (default: `teclabmin`)
-- **REPO**: Git repository URL (default: `git@github.com:bennidi/teclab-flintstone.git`)
-- **APP**: Application name/directory name (default: `flintstone`)
-
-### Optional
-
-- **ENV**: Application environment (default: `production`)
-- **AUTOSTART**: Enable and start service immediately (default: `True`)
-- **NODE_PATH**: Path to Node.js binaries (default: `/home/teclabmin/.nvm/versions/node/v21.7.3/bin`)
-
-## Example Usage
-
-### Basic Configuration
-
-```json
-{
-  "USER": "myuser",
-  "REPO": "git@github.com:myorg/myapp.git",
-  "APP": "myapp"
-}
-```
-
-### Advanced Configuration
-
-```json
-{
-  "USER": "appuser",
-  "REPO": "git@github.com:myorg/myapp.git",
-  "APP": "myapp",
-  "ENV": "staging",
-  "AUTOSTART": false,
-  "NODE_PATH": "/home/appuser/.nvm/versions/node/v20.0.0/bin"
-}
-```
+It does **not** create the unit. Something else — a package, another cube, a
+`files.template` — has to have put `<APP>.service` on the host first. This cube
+is the switch, not the wiring.
 
 ## What This Cube Does
 
-1. **Clone Repository**: Clones the specified Git repository to `/home/<USER>/<APP>`
-2. **Install Dependencies**: Runs `yarn install` to install all dependencies
-3. **Build Application**: Runs `yarn build` to compile the application
-4. **Start Docker Services**: Runs `docker compose up -d` to start containerized services
-5. **Create Startup Script**: Creates `/home/<USER>/<APP>.service.sh` that:
-   - Starts Docker Compose services
-   - Starts PM2 with ecosystem.config.js
-6. **Create Systemd Service**: Creates `/etc/systemd/system/<APP>.service` that:
-   - Runs after Docker service
-   - Uses the specified user
-   - Configures proper environment (HOME, PATH)
-   - Auto-restarts on failure
-7. **Enable & Start Service**: Enables and starts the service (if AUTOSTART=True)
+With `AUTOSTART=True` (the default), two `systemd.service` operations against
+`<APP>`: one setting `enabled=True` so the unit comes up on boot, one setting
+`running=True` so it comes up now. Both are idempotent — a unit already enabled
+and running is left alone.
 
-## Service Management
+With `AUTOSTART=False`, nothing is changed. The cube prints the two commands you
+would run by hand and exits, which is the point of the flag: install now, decide
+later.
 
-### Check service status
+## Configuration
 
-```bash
-sudo systemctl status <APP>
-```
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `APP` | *(required)* | the systemd unit name, without the `.service` suffix — `flintstone` for `/etc/systemd/system/flintstone.service`. This is what `systemctl` is actually pointed at. |
+| `SERVICE_NAME` | `Application` | a display name, used only in the operation labels pyinfra prints and in the `AUTOSTART=False` message. Changing it changes what you read, not what happens. |
+| `AUTOSTART` | `true` | whether to enable and start the unit at all. |
 
-### Start the service
+`APP` has no default, so `nopy -D` (`--use-defaults`) fails by name rather than
+guessing. Supply it under `env` in `.nopyrc.json`, from a dependency, or at the
+prompt.
 
-```bash
-sudo systemctl start <APP>
-```
+## Dependencies
 
-### Stop the service
+None declared, and none implied beyond the unit file itself. `systemd.service`
+is a pyinfra built-in; there is nothing to install.
+
+## Post-Installation
 
 ```bash
-sudo systemctl stop <APP>
+systemctl status <APP>        # is it running?
+systemctl is-enabled <APP>    # will it come back after a reboot?
+journalctl -u <APP> -f        # follow its log
 ```
 
-### Restart the service
-
-```bash
-sudo systemctl restart <APP>
-```
-
-### View service logs
-
-```bash
-sudo journalctl -u <APP> -f
-```
-
-### Disable autostart
-
-```bash
-sudo systemctl disable <APP>
-```
-
-## File Structure
-
-After deployment:
-
-```
-/home/<USER>/
-├── <APP>/                      # Application directory
-│   ├── ecosystem.config.js     # PM2 configuration
-│   ├── docker-compose.yml      # Docker services
-│   └── ...                     # Application files
-├── <APP>.service.sh            # Startup script
-/etc/systemd/system/
-└── <APP>.service               # Systemd service file
-```
-
-## Troubleshooting
-
-### Service fails to start
-
-1. Check service logs:
-   ```bash
-   sudo journalctl -u <APP> -n 50
-   ```
-
-2. Verify Docker is running:
-   ```bash
-   sudo systemctl status docker
-   ```
-
-3. Check if Node.js path is correct:
-   ```bash
-   which node
-   which pm2
-   ```
-
-### Repository clone fails
-
-- Ensure SSH keys are properly configured for the user
-- Test SSH access: `ssh -T git@github.com`
-- Check repository URL is correct
-
-### Docker Compose fails
-
-- Verify Docker is installed and running
-- Check docker-compose.yml exists in the application directory
-- Ensure user has Docker permissions: `sudo usermod -aG docker <USER>`
-
-### PM2 not starting
-
-- Verify PM2 is installed: `pm2 --version`
-- Check ecosystem.config.js exists
-- Verify NODE_PATH includes PM2 binary location
+If the run fails with *Unit `<APP>.service` could not be found*, the unit was
+never installed — see Purpose. `systemctl daemon-reload` is worth trying if the
+file was written after systemd last read the directory.
 
 ## Notes
 
-- The service type is set to `forking` to support PM2's daemon mode
-- Service will auto-restart on failure with a 5-second delay
-- Maximum 5 restart attempts in the burst period
-- The service waits for Docker to be ready before starting
-- Environment variables can be configured in the ecosystem.config.js file
+- Enabling and starting are separate systemd concepts and this cube always does
+  both or neither. If you need one without the other, call `systemd.service`
+  from your own deploy script.
+- `SERVICE_NAME` is deliberately not passed to systemd. The unit is identified
+  by `APP` alone, so a wrong `SERVICE_NAME` is a cosmetic mistake rather than a
+  cube that manages the wrong service.
