@@ -92,7 +92,12 @@ program
   .option('-n, --dry-run', 'Show execution plan without running')
   .option('-P, --print-only', 'Print deploy commands and exit (no execution)')
   .option('-c, --continue-on-error', 'Continue executing after failures')
-  .option('--no-history', 'Do not save this session to history')
+  // `--no-save-history`, not `--no-history`: Commander derives the destination
+  // from the long flag with the `no-` stripped, so `--no-history` wrote to the
+  // same `options.history` that `-H <id>` does. `-H abc --no-history` set it to
+  // `false`, the id was silently discarded, and the run fell through to a full
+  // interactive session instead of replaying anything.
+  .option('--no-save-history', 'Do not save this session to history')
   .action(async (options) => {
     await printUpdateNotice();
 
@@ -139,7 +144,7 @@ program
         dryRun: options.dryRun,
         printOnly: options.printOnly,
         continueOnError,
-        saveToHistory: options.history !== false && !options.dryRun,
+        saveToHistory: options.saveHistory !== false && !options.dryRun,
       });
 
       // Exit with error code if deployment failed
