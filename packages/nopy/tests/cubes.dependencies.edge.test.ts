@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { BuildContext } from '../src/cubes/dependencies.js';
 import { Variables } from '../src/nopy.common.js';
 import type { NopyConfig } from '../src/nopy.config.js';
+import { NopyUsageError } from '../src/nopy.errors.js';
 import type { NopySession } from '../src/nopy.session.js';
 
 vi.mock('../src/nopy.prompts.js', async () => {
@@ -58,6 +59,104 @@ describe('BuildContext error handling', () => {
     });
 
     await expect(context.resolveCube('cube-b', 'host1')).rejects.toThrow('Cube not found: ghost');
+  });
+});
+
+describe('BuildContext cycle detection', () => {
+  const depCube = (id: string, deps: string[]) =>
+    new Cube(
+      Manifest.create({ id, name: id, schema: z.object({}), dependencies: () => deps }),
+      `/test/${id}`,
+      'deploy.py'
+    );
+
+  const build = (cubes: Cube[]) =>
+    new BuildContext(
+      Object.fromEntries(cubes.map((c) => [c.id, c])),
+      new Variables(),
+      session(),
+      config,
+      { method: 'ssh' },
+      { useDefaults: true }
+    );
+
+  it('rejects a cube that depends on itself', async () => {
+    const context = build([depCube('cube-a', ['cube-a'])]);
+
+    await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
+      'Circular dependency on host1: cube-a → cube-a'
+    );
+  });
+
+  it('names the whole path of a longer loop', async () => {
+    const context = build([
+      depCube('cube-a', ['cube-b']),
+      depCube('cube-b', ['cube-c']),
+      depCube('cube-c', ['cube-a']),
+    ]);
+
+    await expect(context.resolveCube('cube-a', 'host1')).rejects.toThrow(
+      'Circular dependency on host1: cube-a → cube-b → cube-c → cube-a'
+    );
+  });
+
+  it('reports the loop as usage rather than overflowing the stack', async () => {
+    const context = build([depCube('cube-a', ['cube-b']), depCube('cube-b', ['cube-a'])]);
+
+    // The point of the finding: before the guard this recursed until V8 gave up,
+    // and a RangeError names no cube and reads as a nopy crash rather than a
+    // manifest that says something impossible.
+    await expect(context.resolveCube('cube-a', 'host1')).rejects.toBeInstanceOf(NopyUsageError);
+    expect(context.deployCalls).toHaveLength(0);
+  });
+
+  it('catches a loop a hook closes rather than a dependency', async () => {
+    const a = new Cube(
+      Manifest.create({
+        id: 'cube-a',
+        name: 'A',
+        schema: z.object({}),
+        dependencies: () => ['cube-b'],
+      }),
+      '/test/cube-a',
+      'deploy.py'
+    );
+    const b = new Cube(
+      Manifest.create({
+        id: 'cube-b',
+        name: 'B',
+        schema: z.object({}),
+        before: [async (ctx) => ctx.exec('cube-a', {})],
+      }),
+      '/test/cube-b',
+      'deploy.py'
+    );
+
+    await expect(build([a, b]).resolveCube('cube-a', 'host1')).rejects.toThrow(
+      'Circular dependency on host1: cube-a → cube-b → cube-a'
+    );
+  });
+
+  it('allows a diamond, where the shared cube is entered twice but never nested', async () => {
+    const context = build([
+      depCube('top', ['left', 'right']),
+      depCube('left', ['shared']),
+      depCube('right', ['shared']),
+      depCube('shared', []),
+    ]);
+
+    await context.resolveCube('top', 'host1');
+
+    expect(context.deployCalls.map((c) => c.cube)).toEqual(['shared', 'left', 'right', 'top']);
+  });
+
+  it('allows the same cube on a different host', async () => {
+    const context = build([depCube('cube-a', [])]);
+
+    await context.resolveCube('cube-a', 'host1');
+    await context.resolveCube('cube-a', 'host2');
+
+    expect(context.deployCalls.map((c) => c.host)).toEqual(['host1', 'host2']);
   });
 });
 

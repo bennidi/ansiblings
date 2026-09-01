@@ -23,6 +23,18 @@ export class BuildContext {
   public readonly cubeSessions: CubeSession[] = [];
   private readonly resolvedCubes = new Set<string>();
 
+  /**
+   * The (cube, host) pairs currently being resolved, innermost last.
+   *
+   * `resolvedCubes` cannot serve here: it is written by `buildDeployCall`, which
+   * runs *after* the recursive descent, so a cycle never reaches it — the two
+   * cubes just recurse until the stack overflows. It cannot be widened into a
+   * "seen" set either, because re-entering a cube with different `param`
+   * overrides is a legitimate thing for a dependency or a hook to do. What is
+   * never legitimate is re-entering one that has not finished.
+   */
+  private readonly resolving: { cubeId: string; host: string }[] = [];
+
   constructor(
     public readonly allCubes: Record<string, Cube>,
     public readonly variables: Variables,
@@ -131,6 +143,25 @@ export class BuildContext {
   }
 
   /**
+   * Fails a run whose dependency graph loops back on itself.
+   *
+   * Names the whole path rather than just the repeated cube: with dependencies
+   * declared dynamically — and hooks free to `exec` anything at all — the edge
+   * that closed the loop is rarely the one you would guess from the two ends.
+   */
+  private assertNoCycle(cubeId: string, host: string): void {
+    const at = this.resolving.findIndex((f) => f.cubeId === cubeId && f.host === host);
+    if (at === -1) return;
+
+    const path = [...this.resolving.slice(at).map((f) => f.cubeId), cubeId].join(' → ');
+    throw new NopyUsageError(
+      `Circular dependency on ${host}: ${path}. ` +
+        'A cube cannot depend on itself, directly or through a chain — check the ' +
+        '`dependencies()` of each cube named, and any `before`/`after` hook that calls `exec`.'
+    );
+  }
+
+  /**
    * Resolves a cube, its dependencies, and hooks recursively
    */
   public async resolveCube(
@@ -144,6 +175,22 @@ export class BuildContext {
     }
 
     log.debug('Resolving cube', { cubeId, host });
+
+    this.assertNoCycle(cubeId, host);
+    this.resolving.push({ cubeId, host });
+    try {
+      await this.visitCube(cube, host, overrides);
+    } finally {
+      this.resolving.pop();
+    }
+  }
+
+  /**
+   * The body of {@link resolveCube}, once the cube is known and the cycle guard
+   * has admitted it.
+   */
+  private async visitCube(cube: Cube, host: string, overrides: CubeVariables): Promise<void> {
+    const cubeId = cube.id;
 
     // 1. Declare secrets and schema, then assign overrides and defaults. Both
     //    declarations have to come first: the cube's first assignment is what
