@@ -165,10 +165,21 @@ async function versionExists(name, version) {
   }
 }
 
-/** Polls until `name@version` resolves on npmjs, or the deadline passes. */
-async function waitForRelease(name, version, timeoutMs) {
+/**
+ * Polls until `name@version` resolves on npmjs, offering to keep waiting when
+ * the deadline passes.
+ *
+ * The offer is the point. A timeout here is far more often a runner that has
+ * not started the job than a release that failed, and no timeout value survives
+ * a runner that has wedged — so the choice is between asking and making the
+ * operator finish the release by hand. `--yes` and a non-interactive run give
+ * up instead, the latter because {@link confirm} answers with its default when
+ * there is no terminal, which here would extend the deadline forever.
+ */
+async function waitForRelease(name, version, timeoutMs, mayExtend) {
   const started = Date.now();
   const label = `${name}@${version}`;
+  let deadline = started + timeoutMs;
   process.stdout.write(`  waiting for ${label} on npmjs `);
 
   for (;;) {
@@ -177,9 +188,16 @@ async function waitForRelease(name, version, timeoutMs) {
       console.log(chalk.green(` published after ${seconds}s`));
       return true;
     }
-    if (Date.now() - started > timeoutMs) {
+    if (Date.now() > deadline) {
       console.log(chalk.red(' timed out'));
-      return false;
+      if (!mayExtend || !process.stdin.isTTY) return false;
+      console.log(
+        chalk.dim('  A queued or wedged runner looks exactly like this — check the run.')
+      );
+      if (!(await confirm(`Keep waiting for ${label}?`, true))) return false;
+      deadline = Date.now() + timeoutMs;
+      process.stdout.write(`  waiting for ${label} on npmjs `);
+      continue;
     }
     process.stdout.write('.');
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -664,7 +682,7 @@ async function release(options) {
   console.log(`  push    ${options.remote} ${branch}, then tags in the order above`);
   console.log(
     options.wait
-      ? `  wait    for each version on npmjs (up to ${options.waitTimeout}s each)\n`
+      ? `  wait    for each version on npmjs (asks to continue after ${options.waitTimeout}s)\n`
       : '  wait    no — tags are pushed back to back\n'
   );
 
@@ -751,7 +769,8 @@ async function release(options) {
     const landed = await waitForRelease(
       entry.pkg.manifest.name,
       entry.version,
-      options.waitTimeout * 1000
+      options.waitTimeout * 1000,
+      !options.yes
     );
     if (!landed) {
       pending.push(entry);
@@ -772,7 +791,13 @@ async function release(options) {
   const blocked = pending[0];
   const shipped = blocked ? plan.slice(0, plan.indexOf(blocked)) : plan;
 
-  console.log(chalk.bold('\n  Done\n'));
+  // The header has to know whether this worked. It was an unconditional 'Done'
+  // over a `shipped` list that is *empty* when the package that blocked is the
+  // first one — a success banner above a release that shipped nothing, with the
+  // diagnosis a screen further down. It read as success and was believed.
+  console.log(chalk.bold(blocked ? '\n  Blocked\n' : '\n  Done\n'));
+
+  if (blocked && shipped.length > 0) console.log(chalk.dim('  Released before the blockage:\n'));
   for (const entry of shipped) {
     console.log(`  ${entry.pkg.manifest.name}@${entry.version}  (${distTag(entry.version)})`);
     console.log(chalk.dim(`    npm install -g ${entry.pkg.manifest.name}@${entry.version}`));
@@ -817,7 +842,12 @@ program
   .option('--no-verify', 'Skip the lint/typecheck/test/build gate')
   .option('--no-changelog', 'Do not prompt for release notes')
   .option('--no-wait', 'Do not poll npmjs between tag pushes')
-  .option('--wait-timeout <seconds>', 'How long to wait for each version', Number, 1200)
+  .option(
+    '--wait-timeout <seconds>',
+    'How long to wait before asking to keep waiting',
+    Number,
+    2400
+  )
   .addHelpText(
     'after',
     `

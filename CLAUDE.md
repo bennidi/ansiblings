@@ -342,12 +342,15 @@ regardless of `--tag`; on Gitea it did not exist at all. Note that `npm view
 <name>` against a registry with no `latest` tag prints nothing and exits **0**,
 which is why this looked like a working lookup. (`npm view <name>@<version>`
 does exit 1 for a missing version, so the workflows' idempotency guards are
-fine.) All four packages were reset to `0.5.0`; `1.0.0-alpha5` stays the
-numerically highest version on npmjs, so install with an explicit `@latest`.
+fine.) All four packages were reset to `0.5.0`, and `nopy`, `nopy-cubes` and
+`nopy-cubes-core` have since gone out as `1.0.1` — the first release where
+`latest` actually moved on both registries. `keyman` is still `0.7.0` and on
+neither.
 
 - Push to `main` → `publish-snapshot.yml` publishes every package to the Gitea
   registry as `<version>-main.<run>.g<sha>` under the `main` dist-tag. The
-  version is set on the runner with `npm pkg set` and never committed.
+  version is set on the runner with `npm pkg set` and never committed. It skips
+  commits whose message starts with `release:` — see *Runner contention* below.
 - `git tag <dir>-v<version>` (e.g. `nopy-v1.2.0` — the directory under
   `packages/`, not the npm name) → `release.yml` publishes to Gitea *and* npmjs.
   The tag chooses the package, `package.json` supplies the version, and the run
@@ -400,11 +403,26 @@ gets `-vvv --debug`. Treat `docs/REFACTORING.md` as a plan, not a record.
 
 The publish lane has now run against the Gitea registry: all four packages are
 there under `@main`, and `pnpm run try:snapshot` installs them into a throwaway
-project with npm and runs the binary. The npmjs lane has only ever published
-`@bitsquare/nopy`; `keyman`, `nopy-cubes` and `nopy-cubes-core` have never been
-released there. That used to be caught by the *check linked deps are released*
+project with npm and runs the binary. The npmjs lane has published `nopy`,
+`nopy-cubes` and `nopy-cubes-core` at `1.0.1`; `keyman` has never been released
+there. Ordering used to be enforced by the *check linked deps are released*
 guard in `release.yml`; now it is `pnpm run release` that holds `nopy`'s tag back
 until `nopy-cubes` answers on npmjs.
+
+### Runner contention
+
+`scripts/release.mjs` pushes the branch and then the tags seconds apart.
+`publish-snapshot.yml` keys its concurrency group on the branch and `release.yml`
+keys its own on the tag, so the two workflows never gate each other — on a
+single runner they simply race for it, and the branch push always wins. The
+1.0.1 release is what surfaced this: the snapshot job wedged extracting a layer
+of `runner-images:ubuntu-latest`, the release job never started, `release.mjs`
+gave up after its 20-minute wait, and two of the three tags were left unpushed
+while the report still printed a bold **Done**. Three things changed as a
+result — the snapshot job skips `release:` commits, the wait offers to keep
+waiting rather than giving up (no timeout survives a wedged runner), and the
+final header says **Blocked** when it is. The tags were pushed by hand
+afterwards; all three packages are on npmjs.
 
 Nothing checks that a bundle and the CLI reading it are compatible versions;
 `nopy.engines` was considered and deferred. `docs/CUBE-PACKAGES.md` is where all

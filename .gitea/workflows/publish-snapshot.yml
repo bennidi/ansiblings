@@ -20,6 +20,17 @@ concurrency:
 
 jobs:
   snapshot:
+    # Not on a release commit. `scripts/release.mjs` pushes the branch and then
+    # the tags seconds apart, and this workflow's concurrency group is keyed on
+    # the branch while release.yml's is keyed on the tag — so the two never gate
+    # each other, they race for the runner, and the branch push always gets
+    # there first. Measured: a snapshot job that wedged pulling the runner image
+    # held the runner long enough for release.mjs to give up waiting on npmjs,
+    # leaving two of three tags unpushed.
+    #
+    # Skipping costs nothing. A snapshot of a release commit is the same tree
+    # the tag is about to publish properly, under a version nobody installs.
+    if: ${{ !startsWith(github.event.head_commit.message, 'release:') }}
     runs-on: ubuntu-latest
 
     env:
