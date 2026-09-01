@@ -10,6 +10,7 @@ export type { Assignment, Origin, TVariables, Value } from './nopy.common.js';
 // Variables
 export { MASK, Variable, Variables } from './nopy.common.js';
 export type {
+  CubePackageRef,
   ExecutionConfig,
   HistoryConfig,
   LogConfig,

@@ -15,20 +15,23 @@ Verified against the working tree at commit `fcc1817`. Line numbers are from tha
 state.
 
 Findings closed since are marked **✅ … fixed** and keep their original text as
-the record of what was wrong. So far: §1.1 (`--use-defaults`), §2.2
-(`getDefaults()`), §2.1 (precedence — the second half closed differently than
-proposed), §3 in full (`docs/API.md`, regenerated), §4.2 (password on stdout —
-points 1 and 2 of 3), §4.3 (what a session records), §2.9 (the nopy README's
+the record of what was wrong. So far: §1.1 (`--use-defaults`), §1.3 (`log.*`),
+§1.5 (topological order, both halves), §2.2 (`getDefaults()`), §2.1 (precedence —
+the second half closed differently than proposed), §2.3 (the prompt label lost to
+`.default()`), §3 in full (`docs/API.md`, regenerated), §4.2 (password on stdout,
+all three points), §4.3 (what a session records), §2.9 (the nopy README's
 yarn install instructions), §2.4 (`version` / `timestamp`, implemented rather
 than deleted), §2.5 (`listSessions`' filename filter), §4.5 (`-s` on a replay,
-plus `-l` and history), §6.7 (a secret written to the session in plaintext), and
-one bullet of §6.4.
+plus `-l` and history), §5.1 and §6.1 (`service/autostart`, the README and the
+script), §6.2 (`-H <id>` versus `--no-history`), §6.5 (cycle detection), §6.7 (a
+secret written to the session in plaintext), and one bullet of §6.4.
 
 Closing §3 also settled the documentation half of several findings elsewhere
-without touching their underlying cause: §1.3, §1.5, §2.3, §2.7, §4.4 and
-§6.5 are each now stated accurately in `docs/API.md`, but the code still behaves
-as those findings describe and they stay open. §1.2 was closed outright by
-removing the flag.
+without touching their underlying cause. Two of those are still in that state:
+§2.7 and §4.4 are stated accurately in `docs/API.md`, but the code still behaves
+as they describe and they stay open. The other four — §1.3, §1.5, §2.3 and §6.5 —
+have since been closed in the code as well. §1.2 was closed outright by removing
+the flag.
 
 ## Where the drift is
 
@@ -139,7 +142,19 @@ pyinfra's own output, everything nopy says about itself goes to stderr**, and th
 exit code is the verdict. `nopy history --json` is a different flag, it works,
 and it stays.
 
-### 1.3 🟠 `log.verbosity` and `log.debug` have no effect
+### 1.3 ✅ `log.verbosity` and `log.debug` have no effect — **fixed**
+
+> **Closed by implementing it, not by deleting the documentation.** The two
+> tables in the README were accurate about pyinfra's flags and about the mapping
+> `logConfigToFlags()` already computed — the only missing step was one call.
+> `buildDeployCall` now prefixes `logConfigToFlags(this.config.log)` onto the
+> pyinfra argv, right after `-y`. Verified against a real `pyinfra` binary, which
+> accepts `-vv --debug` in that position.
+>
+> Worth knowing rather than discovering: `packages/nopy/.nopyrc.json` asks for
+> `"verbosity": "trace", "debug": true`, and it now gets `-vvv --debug`. The
+> value was left alone — it says what its author meant, and it never did anything
+> until now.
 
 Pre-existing known drift, recorded in `CLAUDE.md`, but the README still presents
 it as a working feature — two tables, a recommendation paragraph, and a slot in
@@ -159,7 +174,25 @@ This is live in the repo's own config: `packages/nopy/.nopyrc.json` sets
 the current interface at `cubes/types.ts:43-56`, which has `id`, `name`,
 `schema`, `dependencies`, `before`, `after` and nothing else.
 
-### 1.5 🟠 Topological sorting
+### 1.5 ✅ Topological sorting — **closed, both halves**
+
+> **The vocabulary complaint was answered by §6.9; the substantive one is now
+> fixed in code.** There is still no sort pass, and there does not need to be:
+> emission is post-order, so the output *is* a topological order of the graph
+> (§6.9 records the measurement and two tests pin it). What the finding was right
+> about is that a sort detects cycles and this did not.
+>
+> `BuildContext` now carries a **resolution stack** alongside `resolvedCubes`: a
+> (cube, host) pair re-entered while it is still resolving raises a
+> `NopyUsageError` naming the whole path — `Circular dependency on host1:
+> a → b → c → a`. It has to be a separate structure. `resolvedCubes` is written
+> *after* the descent, so a cycle never reaches it, and it cannot be widened into
+> a "seen" set because re-entering a *finished* cube with different `param`
+> overrides is precisely what a dependency or a hook is for. Six tests cover it,
+> including a loop closed by a hook's `exec` rather than a `dependencies()`
+> entry, and a diamond that must still be allowed.
+>
+> The README claims are reworded: "in dependency order, with cycle detection".
 
 `README.md:11` ("Dependency resolution with **topological sorting**"),
 `README.md:25` ("Topologically sorts cubes based on dependencies") and
@@ -277,7 +310,20 @@ Three cubes in this repo are in that state today:
 The failure is silent — no error, no warning, just a pyinfra run with an empty
 data set.
 
-### 2.3 🔴 `.describe()` before `.default()` loses the prompt label
+### 2.3 ✅ `.describe()` before `.default()` loses the prompt label — **fixed**
+
+> **Closed the one-line way, not by re-ordering 15 manifests.** `nopy.prompts.ts`
+> has a `promptLabel()` that walks down through `default` / `optional` /
+> `nullable` wrappers looking for a description, so both chaining orders now give
+> the sentence and neither can regress. Discriminates on `zodKind`, not
+> `instanceof`, for the reason recorded on that function.
+>
+> Proven twice over. The mocked test asserts all four shapes —
+> `describe().default()`, `default().describe()`, a doubly-wrapped
+> `describe().optional().default()`, and a field with no description at all. The
+> **pty** test is the one that matters: its probe schema is written in the losing
+> order and it now waits for `First value` on a real enquirer render, so removing
+> the unwrapping fails a test that talks to an actual terminal.
 
 `CLAUDE.md` and the cube contract state that each schema field is `.describe()`d
 and "the description is the prompt label". `nopy.prompts.ts:184-185` reads it as:
@@ -613,9 +659,30 @@ Because `loadCubes` turns each failure into an `errors` entry and `nopy.main.ts:
 aborts when `errors.length > 0`, a fresh clone cannot run a single cube. Neither
 README mentions a setup step.
 
-### 4.2 🟠 The SSH password is printed in plaintext — **mostly fixed**
+### 4.2 ✅ The SSH password is printed in plaintext — **fixed as far as it can be**
 
-> **Points 1 and 2 resolved; point 3 stands.** `maskCommand()`
+> **Point 3 is now closed too, and it was worse than the finding said.** The
+> command is no longer a shell string. `buildDeployCall` emits a true argv — one
+> element per argument, nothing pre-quoted — and `executeCall` spawns it as
+> `execa(command[0], command.slice(1))` with no `shell` option at all.
+>
+> The finding called the quoting a vulnerability "in the password". It was not
+> limited to the password: with `shell: true` the whole joined string was parsed
+> by `sh`, and `--data` values were interpolated inside double quotes, so a `$(…)`
+> or a backtick in *any* variable value was command substitution. Verified both
+> ways against a real pyinfra: `--data 'MOTD=$(id); rm -rf /'` now arrives at
+> `host.data.MOTD` verbatim.
+>
+> `maskCommand()` was rewritten to walk the argv by position rather than to
+> pattern-match a joined string, which also fixes a leak the old version had — it
+> bounded a secret's value on the closing `"` the builder had written, so a value
+> containing a `"` leaked its own tail. It shell-quotes as it joins, so
+> `--print-only` output is still pasteable.
+>
+> What remains is not fixable here: the value still reaches pyinfra on its
+> command line and so is visible in `ps`. That is pyinfra's `--data` interface.
+
+> **Points 1 and 2 resolved earlier.** `maskCommand()`
 > (`nopy.executor.ts`) rewrites the SSH `--password` and every `--data` value the
 > manifest declared a secret, and it is applied at all three places the command
 > string is printed: the debug log, the dry-run plan, and `--print-only`. The
@@ -623,10 +690,8 @@ README mentions a setup step.
 > says which keys are sensitive, so `TOKEN`, `PSK` and `AUTH_KEY` are covered
 > too, and it no longer matters that a key merely *looks* like a password.
 >
-> Point 3 is unchanged and now documented instead: the value still reaches
-> pyinfra on its command line, so it is visible in `ps`. That is inherent to
-> pyinfra's `--data` interface, not something nopy can mask. The shell-quoting
-> concern in the same point is also still open. See `docs/REFACTORING.md` item 7.
+> (At the time: point 3 unchanged, documented rather than fixed. See
+> `docs/REFACTORING.md` item 7.)
 
 Not stated in any document, and it sits directly against the security notes at
 `README.md:217` and `:325` (which are narrowly about *storage*, and are correct
@@ -730,7 +795,15 @@ a project without `KEY_DIR` in their config gets `None`.
 Two cubes have **no README at all**: `cubes/admin/hostname` and `cubes/git/clone`
 (20 of 22 have one).
 
-### 5.1 🔴 `cubes/service/autostart/README.md` documents a different cube
+### 5.1 ✅ `cubes/service/autostart/README.md` documents a different cube — **fixed**
+
+> **Rewritten from the manifest and the (now working, see §6.1) deploy script.**
+> Three parameters, `APP` / `SERVICE_NAME` / `AUTOSTART`, each described as what
+> it actually does — including that `SERVICE_NAME` never reaches systemd and is
+> a label only, so getting it wrong is cosmetic rather than a cube that manages
+> the wrong unit. The new text also states the thing the old one obscured by
+> describing a deploy pipeline: this cube does **not** create the unit file, it
+> only enables and starts one that already exists.
 
 The file is titled **"TypeStack Install Cube"** and describes cloning a git
 repository, `yarn install`, `yarn build`, `docker compose up -d`, and PM2 process
@@ -794,7 +867,14 @@ have empty schemas.)
 
 Not documentation issues, but found while checking the docs and worth recording.
 
-### 6.1 🔴 `cubes/service/autostart/deploy.py` cannot run
+### 6.1 ✅ `cubes/service/autostart/deploy.py` cannot run — **fixed**
+
+> **Three lines.** `server` is imported alongside `systemd`, and `SERVICE_NAME`
+> and `AUTOSTART` are read off `host.data` next to `APP`. The logic underneath
+> was always right; nothing else changed. `python3 -m py_compile` passes.
+>
+> The "fails twice over" clause is stale: §2.2 closed with `-D`, so the cube does
+> get its `--data` now.
 
 ```python
 from pyinfra.operations import systemd     # `server` is never imported
@@ -811,7 +891,31 @@ if AUTOSTART:                              # NameError
 `host.data`; `server` is used but not imported. The script raises `NameError` on
 the `if`. Per §2.2 this cube also gets no `--data` at all, so it fails twice over.
 
-### 6.2 🔴 `-H <id>` and `--no-history` share one destination
+### 6.2 ✅ `-H <id>` and `--no-history` share one destination — **fixed**
+
+> **The boolean was renamed, not the replay flag.** `--no-history` is now
+> `--no-save-history`, writing to `options.saveHistory`; `-H, --history <id>`
+> keeps `options.history` and every documented invocation of it is unchanged.
+> Renaming the boolean is the right way round twice over: `-H <id>` is what the
+> help text, the README and `docs/API.md` all use, and "save history" is what the
+> flag actually suppresses, next to `-s, --save-session`.
+>
+> Commander cannot be told to use a different destination — `attributeName()` is
+> derived from the long flag with `no-` stripped — so separating the two meant
+> changing one of the two spellings. The old spelling now fails loudly rather
+> than silently, which is the point: `nopy install --no-history` prints
+> `error: unknown option '--no-history'`.
+>
+> Verified by running the CLI, since `nopy.cli.ts` is argv wiring and excluded
+> from coverage:
+>
+> ```
+> install -H nonexistent-id                     -> Session not found: nonexistent-id
+> install -H nonexistent-id --no-save-history   -> Session not found: nonexistent-id
+> install --no-history                          -> error: unknown option '--no-history'
+> ```
+>
+> The middle line is the finding: the id used to be destroyed there.
 
 Both options write to `options.history` (`nopy.cli.ts:57` and `:64`). Verified
 with Commander:
@@ -846,10 +950,14 @@ the three has to give.
   with a third one nobody had noticed: a `console.log` *inside* a `filter`
   callback in `keyman.decrypt.ts`, printing a line per vault directory.
 
-### 6.5 🟡 No cycle detection
+### 6.5 ✅ No cycle detection — **fixed**
 
-Covered under §1.5. `docs/API.md:160` documents the error; there is no code that
-raises it. Mutually dependent cubes recurse until the stack overflows.
+Covered under §1.5, and closed there: the resolution stack raises a
+`NopyUsageError` naming the whole path. `docs/API.md` documents the error again,
+and this time something raises it.
+
+~~`docs/API.md:160` documents the error; there is no code that raises it.
+Mutually dependent cubes recurse until the stack overflows.~~
 
 ### 6.6 🟠 `ssh:keygen` depends on `user:add` but shares nothing with it
 
@@ -998,29 +1106,37 @@ Recording what was verified and found correct, so a future pass need not redo it
 
 ## Suggested order of attack
 
-**1 — ~~Decide on the three phantom features.~~ Two left.** §1.1 (`-D`) is
-**done** — implemented, tested, and verified against every cube in `cubes/`.
-That closed §2.2 and half of §2.1 with it, since neither could be left standing
-under a run that never prompts. §1.2 (`--json`) is **done** — removed rather
-than implemented, for the reason recorded there. §1.3 (`log.*`) is still
-"documented, wired up, never read": a small implementation or a small deletion,
-but it cannot stay documented as working.
+**1 — ~~Decide on the three phantom features.~~ Done, three different ways.**
+§1.1 (`-D`) was implemented, tested, and verified against every cube in `cubes/`;
+that closed §2.2 and half of §2.1 with it, since neither could be left standing
+under a run that never prompts. §1.2 (`--json`) was removed rather than
+implemented, for the reason recorded there. §1.3 (`log.*`) was implemented —
+`logConfigToFlags()` finally has a caller, in `buildDeployCall`.
 
-**4 — Decide the `.describe()`/`.default()` ordering (§2.3).** Either read
-through the `ZodDefault` wrapper in `nopy.prompts.ts`, or fix the ordering in all
-14 manifests and the README example. The first is one line and cannot regress.
+**4 — ~~Decide the `.describe()`/`.default()` ordering (§2.3).~~ Done, by
+reading through the wrapper.** `promptLabel()` in `nopy.prompts.ts` walks
+`default`/`optional`/`nullable` down to the described schema, so both orders
+work and the 15 manifests that had it "wrong" needed no edit. The alternative —
+reordering every manifest — would have left the next one free to regress.
 
 **5 — ~~Regenerate `docs/API.md` (§3).~~ Done.** Rewritten against the source
 rather than patched, and extended to the exports that never had an entry
 (variables, history, prompts, the authoring package). One new finding came out of
-it: `CubePackageRef` is not re-exported from `src/index.ts` although `NopyConfig`
-refers to it — a one-line fix, left for whoever next touches the export list.
+it — `CubePackageRef` was not re-exported from `src/index.ts` although
+`NopyConfig` refers to it — and that one line has since been added.
 
-**6 — Cube docs (§5) and the two missing READMEs.** `service/autostart` is the
-worst — its README belongs to a different cube, and its `deploy.py` does not run
-at all (§6.1).
+**6 — Cube docs (§5).** `service/autostart` was the worst and is **done**: its
+`deploy.py` now reads its three variables off `host.data` instead of raising
+`NameError` (§6.1), and its README describes that cube rather than a different
+one (§5.1). Still open: §5.2 (four wrong parameters in
+`network/wifi/access-point`), §5.3 (two cubes claiming to have no parameters) and
+the missing READMEs.
 
-**7 — Secrets on stdout (§4.2, §6.4).** The `console.log` in `Variables.assign`
-is gone. Still open: mask the password in the executor's debug line and in the
-dry-run plan, and pass `--user`/`--password` as argv rather than interpolating
-into a shell string.
+**7 — ~~Secrets on stdout (§4.2, §6.4).~~ Done as far as it can be.** The
+`console.log` in `Variables.assign` is gone; the password is masked in the
+executor's debug line and in the dry-run plan; and the whole command is argv now,
+run without a shell, so nothing is interpolated into a string any shell will
+re-parse. What is left is inherent: pyinfra takes `--data` on its own argv, so
+the value is visible in `ps` on the machine running the deploy for the length of
+the run. Fixing that means a change on pyinfra's side, not this one's. §6.4's
+remaining bullet is unrelated debug output.

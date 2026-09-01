@@ -439,20 +439,29 @@ Recursive, per (cube, host):
 5. emit the deploy call;
 6. run `after` hooks.
 
-There is no separate topological sort — the ordering falls out of the recursion,
-and a `${cubeId}:${host}` set makes emission idempotent. Consequently there is no
-cycle detection either: two mutually dependent cubes recurse until the stack
-overflows.
+There is no separate topological sort — emission is post-order, so a dependency
+is always emitted ahead of its dependent and the ordering *is* topological
+without an algorithm computing it. A `${cubeId}:${host}` set makes emission
+idempotent.
 
-**Throws** when the cube id is unknown, when `useDefaults` cannot fill a required
-key, when a replay would need a value only the user has (secrets are never
-recorded), and when a cancelled prompt leaves a required key empty.
+Cycles are detected by the resolution stack rather than by the sort that does not
+exist: a (cube, host) pair re-entered while it is still resolving raises with the
+whole path named — `Circular dependency on host1: a → b → c → a`. The stack is
+separate from the idempotence set on purpose, since re-entering a *finished* cube
+with different `param` overrides is legitimate and a dependency or hook may do it.
 
-The command it builds:
+**Throws** when the cube id is unknown, when the dependency graph contains a
+cycle, when `useDefaults` cannot fill a required key, when a replay would need a
+value only the user has (secrets are never recorded), and when a cancelled prompt
+leaves a required key empty.
+
+The command it builds — an argv array, one element per argument, nothing quoted:
 
 ```
-pyinfra <host> -y [--user U --password P] --data "K=V" … --chdir <cubeDir> <cubeDir>/<deployScript>
+pyinfra <host> -y [-v|-vv|-vvv] [--debug] [--user U --password P] --data K=V … --chdir <cubeDir> <cubeDir>/<deployScript>
 ```
+
+The verbosity and debug flags come from `config.log` via `logConfigToFlags()`.
 
 ---
 
@@ -599,9 +608,14 @@ interface ExecutionOptions {
 ### `executeDeployCalls(calls, options?)`
 
 Runs the calls **sequentially**, in the order they were built, through
-`execa({ shell: true })` with `stdio: 'inherit'` so pyinfra's output reaches the
-terminal live. Stops at the first failure unless `continueOnError`. With
-`dryRun`, prints the plan and returns `[]` without executing.
+`execa(command[0], command.slice(1))` with `stdio: 'inherit'` so pyinfra's output
+reaches the terminal live. Stops at the first failure unless `continueOnError`.
+With `dryRun`, prints the plan and returns `[]` without executing.
+
+**No shell.** It used to join `command` into one string and run it through
+`execa({ shell: true })`, which made every `--data` value shell syntax: a
+password or a variable containing `;`, a backtick or `$(…)` was executed rather
+than passed along. Spawning the argv directly removes the parse step entirely.
 
 ```typescript
 const results = await executeDeployCalls(calls, {
@@ -630,9 +644,11 @@ maskVariables(call);  // Record<string, string>
 
 pyinfra takes its data on the command line, so the real values have to be in
 `call.command`; these are the last point before they would reach a log, a
-`--print-only` dump or a dry-run plan. `maskCommand` replaces the SSH
-`--password` argument and every `--data "KEY=…"` whose key the manifest declared
-a secret.
+`--print-only` dump or a dry-run plan. `maskCommand` walks the argv, replaces the
+element after `--password` and the value of every `--data KEY=…` whose key the
+manifest declared a secret, and shell-quotes the rest so `--print-only` output
+stays pasteable. It is the only thing that joins `command` into a string —
+nothing executes it that way.
 
 This covers nopy's own output only. The value still reaches pyinfra on its
 command line, so it is visible in `ps` — inherent to pyinfra's `--data`
@@ -808,7 +824,7 @@ interface SessionHistory {
 | `formatHistoryList(entries)` | `string` | what `nopy history` prints |
 
 Recording is suppressed for a dry run, a print-only run, a `-R`/`-H` replay out
-of history, a run that built no deploy calls, `--no-history`, and
+of history, a run that built no deploy calls, `--no-save-history`, and
 `history.autoSave: false` in the config. A `--load-session` run **is** recorded: it is not in history already, and
 without the entry `-R` would have nothing to repeat.
 
@@ -870,9 +886,8 @@ config's `node_modules` rather than the working directory's. It is the same
 problem `PATH_PROPERTIES` solves for relative `cubeDirs`, with a different answer:
 a reference to resolve later instead of a rewritten path.
 
-> The `CubePackageRef` name is currently not re-exported from the package root,
-> though `NopyConfig` refers to it. Import it from `@bitsquare/nopy` and you get
-> `NopyConfig` but not this type by name.
+Re-exported from the package root alongside `NopyConfig`, which refers to it —
+it was not, until the regeneration of this document noticed.
 
 ### `loadConfig()`
 
@@ -1105,7 +1120,7 @@ nopy install -l ./sess.json   # replay a session file
 nopy install -n               # dry run — print the plan, execute nothing
 nopy install -P               # print the built pyinfra commands and exit
 nopy install -c               # continue after a failure
-nopy install --no-history     # do not record this run
+nopy install --no-save-history # do not record this run
 
 nopy history                  # list recorded sessions (alias: h; -j for JSON)
 nopy clear-history            # drop them all
@@ -1125,8 +1140,10 @@ Exit code is 1 when any cube failed.
 "up to date", since an unanswerable check is not a negative answer. See
 [Known gaps](#known-gaps) for what that message conflates.
 
-> `-H <id>` and `--no-history` share one Commander destination, so passing both
-> discards the id and falls through to an interactive run.
+> The suppression flag is `--no-save-history`, not `--no-history`. Commander
+> derives an option's destination from its long flag with `no-` stripped, so
+> `--no-history` wrote to the same `options.history` that `-H <id>` does and
+> `nopy install -H abc --no-history` silently discarded the id.
 
 ---
 
@@ -1169,12 +1186,15 @@ export default Manifest({
 });
 ```
 
-> **Call `.default()` before `.describe()`.** In zod 4, `.default()` returns a
-> `ZodDefault` wrapper that does not inherit `.description` from the type it
-> wraps, and the prompt reads the description off the outer node. So
-> `z.boolean().describe('Update cache').default(false)` prompts with the bare key
-> `UPDATE`, while `z.boolean().default(false).describe('Update cache')` prompts
-> with the sentence. Verified against zod 4.4.3.
+> **The order of `.default()` and `.describe()` does not matter.** It used to.
+> In zod 4, `.default()` returns a `ZodDefault` wrapper that does not inherit
+> `.description` from the type it wraps, so
+> `z.boolean().describe('Update cache').default(false)` prompted with the bare
+> key `UPDATE` while the other order prompted with the sentence — a difference
+> nothing announced, and one that 15 of the 22 core cubes were on the wrong side
+> of. The prompt now unwraps `default`/`optional`/`nullable` looking for a
+> description, so either chaining order gives the label. Verified against
+> zod 4.4.3.
 
 Every schema key reaches pyinfra as `--data KEY=value`, so `host.data.KEY` is
 always defined. pyinfra parses the values itself: `"true"` arrives as a bool and
@@ -1206,11 +1226,6 @@ For packaging cubes as an installable npm bundle, see
 Real behaviour that a reader would otherwise take on trust. Tracked in
 `DOCS-AUDIT.md` and summarised in `CLAUDE.md`.
 
-- **`logConfigToFlags()` is never consumed.** It is exported and unit-tested, but
-  nothing feeds its output into the built pyinfra command, so `log.verbosity` and
-  `log.debug` in `.nopyrc.json` have no effect today.
-- **No cycle detection.** Ordering is a side effect of recursion, not a
-  topological sort. Two mutually dependent cubes overflow the stack.
 - **`DeployCall.dependencies` is always `[]`.** The field is populated nowhere;
   dependency information lives in the emission order.
 - **`ExecutionResult.stdout` / `.stderr` are always `undefined`,** because the

@@ -1,28 +1,30 @@
 # Nopy
 
-A CLI tool that simplifies **pyinfra** script management and execution, providing an interactive workflow for deploying infrastructure configurations ("cubes") to remote hosts.
+A CLI tool that simplifies **pyinfra** script management and execution, providing an interactive workflow for deploying infrastructure configurations `cubes` to remote hosts.
 
 ## Overview
 
-Nopy wraps pyinfra with structure, validation, and an interactive experience for managing complex infrastructure deployments. It organizes deployments into self-contained "cubes" with dependency management, schema validation, and lifecycle hooks.
+Nopy wraps [pyinfra](https://pyinfra.com/) in the javascript ecosystem to provide an interactive experience for managing repeatable infrastructure deployments. It organizes deployments into self-contained units - called `cubes` - adding support for transitive dependency management, user input validation, and different lifecycle hooks.
 
-## Features
+## Features in a Nutshell
 
-- **Dependency resolution** with topological sorting
-- **Before/after hooks** for multi-cube orchestration
+- **Manifest files** to support declarative description of user inputs and orchestration semantics per cube
+- **Dependency resolution** in dependency order, with cycle detection
+- **Before/after hooks** for programmable, multi-cube orchestration
 - **SSH key or password authentication**
 - **Default values** with optional customization via manifest `env`
-- **Schema validation** using Zod
+- **Schema validation** and **type coercion** using Zod
 - **Recursive cube directory discovery**
-- **Dry-run mode** for previewing deployments
+- **Dry-run mode** for previewing deployment scenarios
 - **Pipeable output** for CI/CD integration — the plan on stdout, everything else on stderr
-- **Session history** with replay capability
+- **Session history** for fast replay during development
+- **Multi-layered** config files with natural discovery and deterministic parameter resolution
 
 ## Workflow
 
 1. **Load cubes** - Discovers and validates cubes from configured directories
 2. **Interactive prompts** - Select cubes, target host, and authentication method
-3. **Dependency resolution** - Topologically sorts cubes based on dependencies
+3. **Dependency resolution** - Resolves each cube's dependencies before the cube itself, so the deploy order is a topological order of the graph; a cycle is reported by name rather than recursed into
 4. **Variable assignment** - Validates and collects configuration with schema validation
 5. **Execute hooks** - Runs before/after hooks for orchestration
 6. **Deploy** - Sequentially executes pyinfra commands
@@ -33,23 +35,20 @@ Nopy wraps pyinfra with structure, validation, and an interactive experience for
 
 A cube is a **directory** containing two files:
 
-- **JavaScript manifest**: `manifest.mjs` defining schema, dependencies, defaults, secrets, and hooks
+- **JavaScript manifest**: `manifest.mjs` defining schema, dependencies, defaults, secrets (encrypted only), and hooks
 - **Python deployment script**: `deploy.py`, a plain pyinfra script
 
 Configuration variables are declared in the manifest and validated with Zod schemas before the deployment script runs.
 
 ```
 cubes/
-├── .npcubes
 └── apt/
     └── install/
         ├── manifest.mjs
         └── deploy.py
 ```
 
-Any directory holding both files is treated as a cube, so cubes can be nested as deeply as you like to group them by topic. Discovery is recursive; directories starting with `.` and `node_modules` are skipped. Additional files in the cube directory (a `README.md`, config templates, and so on) are ignored by the loader and can be referenced from the deploy script — the script runs with its cube directory as the working directory.
-
-The prefixed forms `<cube-name>.manifest.mjs` and `<cube-name>.deploy.py` are also still recognized, but plain `manifest.mjs` / `deploy.py` is the current convention.
+Any directory holding both files is treated as a cube, so cubes can be nested and grouped by topic. Discovery is recursive; hidden directories starting with `.` and `node_modules` are skipped. Additional files in the cube directory (a `README.md`, config templates, and so on) are ignored by the loader but can be referenced from the deploy script — ** the pyinfra script runs with its cube directory as the working directory**.
 
 A cube's identity comes from the manifest's `id` field (see below). If `id` is omitted, nopy falls back to an `[id]` prefix in the manifest `name`, and finally to the directory's own name. Note that the id does not have to mirror the folder path — `cubes/network/tailscale` declares `id: 'net:tailscale'`.
 
@@ -65,7 +64,7 @@ export default cubes.Manifest({
     dependencies: () => [],
     schema: z.object({
         UPDATE: z.boolean().describe('Update package cache').default(false),
-        PACKAGES: z.string().describe('Space-separated list of packages').default('vim htop'),
+        PACKAGES: z.string().describe('Space-separated list of packages').default('curl htop'),
     })
 })
 ```
@@ -118,7 +117,7 @@ A variable can be set from several places in one run. Every assignment is kept, 
 
 This allows cubes to ship with reasonable defaults while still allowing users to override them globally via `.nopyrc.json` or interactively during deployment. Because `env` outranks the schema, `.nopyrc.json` is also what steers a run started with `--use-defaults`, which never prompts.
 
-`prompt` and `param` rarely compete: a key a dependency supplies is left out of the prompt entirely, so the user is only ever asked about the keys nothing else has set.
+`prompt` and `param` rarely compete: a key supplied by a dependency is left out of the user input prompt entirely.
 
 Ranking by origin rather than by arrival order is what makes replay work: a recorded value is applied *before* the cube would be prompted for, and prompting can still override it, but a `--data` value pushed in by a dependency is never clobbered by a stale recording.
 
@@ -572,7 +571,7 @@ A `--load-session` run *is* recorded, and the distinction is the point: a sessio
 
 A run is *not* recorded when:
 
-- `--dry-run`, `--print-only` or `--no-history` is passed — the first two deploy nothing, and history is what `-R` repeats
+- `--dry-run`, `--print-only` or `--no-save-history` is passed — the first two deploy nothing, and history is what `-R` repeats
 - No cubes were selected, so there was nothing to deploy
 - `history.autoSave` is set to `false` in `.nopyrc.json`
 - it is a `-R` or `-H` replay, as above
