@@ -237,6 +237,43 @@ interface FormChoice {
 }
 
 /**
+ * The label to prompt a schema field with: its `.describe()`, read through the
+ * wrappers that hide it, falling back to the bare key.
+ *
+ * In zod 4 a description lives in `z.globalRegistry` keyed by the schema
+ * *instance*, and `.default()` returns a new `ZodDefault` around the described
+ * type rather than mutating it. So the wrapper carries no description of its
+ * own, and the chaining order used to decide whether the label survived:
+ *
+ * ```
+ * z.boolean().describe('Update package cache').default(false)  →  'UPDATE'
+ * z.boolean().default(false).describe('Update package cache')  →  the sentence
+ * ```
+ *
+ * 15 of the 22 core cubes were written the first way, so most prompts showed a
+ * bare key. Unwrapping makes the two orders equivalent, which is the answer that
+ * cannot regress — the alternative was to re-order every manifest and hope the
+ * next one written gets it right.
+ *
+ * Discriminates on {@link zodKind}, not `instanceof`, for the reason given
+ * there. Falling open here only costs an ugly label, but there is no reason to.
+ */
+function promptLabel(zodType: unknown, key: string): string {
+  let current = zodType;
+
+  while (current) {
+    const description = (current as { description?: string }).description;
+    if (description) return description;
+
+    const kind = zodKind(current);
+    if (kind !== 'default' && kind !== 'optional' && kind !== 'nullable') break;
+    current = zodInner(current);
+  }
+
+  return key;
+}
+
+/**
  * Asks the user for a cube's variables and records the answers.
  *
  * Reads what to offer out of `variables`, so the caller is expected to have
@@ -269,11 +306,11 @@ export async function VariableAssignment<S extends AnyObjectSchema>(
 
   if (Object.keys(variablesToConfigure).length === 0) return;
 
-  const choices: FormChoice[] = Object.entries(variablesToConfigure).map(([key, value]) => {
-    const zodType = schema[key];
-    const description = zodType?.description || key;
-    return { name: key, message: description, initial: String(value ?? '') };
-  });
+  const choices: FormChoice[] = Object.entries(variablesToConfigure).map(([key, value]) => ({
+    name: key,
+    message: promptLabel(schema[key], key),
+    initial: String(value ?? ''),
+  }));
 
   const form = new (Enquirer as any).Form({
     name: 'variables',

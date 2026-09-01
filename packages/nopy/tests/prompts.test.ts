@@ -356,6 +356,34 @@ describe('VariableAssignment', () => {
     ]);
   });
 
+  it('finds the label whichever side of .default() it was declared on', async () => {
+    // zod 4 keys a description to the schema *instance* and `.default()` returns
+    // a new wrapper, so `describe().default()` used to prompt with the bare key.
+    // 15 of the 22 core cubes were written that way round.
+    const both = cube(
+      'both',
+      'Both',
+      z.object({
+        BEFORE: z.boolean().describe('Update package cache').default(false),
+        AFTER: z.boolean().default(false).describe('Restart afterwards'),
+        WRAPPED: z.string().describe('Optional note').optional().default('n/a'),
+        NEITHER: z.string().default('x'),
+      })
+    );
+    const variables = new Variables();
+    variables.assign('both', 'default', both.getDefaults());
+    formRun.mockResolvedValue({});
+
+    await VariableAssignment(both, variables);
+
+    expect(formChoices().map((c) => c.message)).toEqual([
+      'Update package cache',
+      'Restart afterwards',
+      'Optional note',
+      'NEITHER',
+    ]);
+  });
+
   it('offers the value the run would use, not the bare schema default', async () => {
     const svc = cube('svc', 'Service', schema);
     const variables = new Variables({ port: 2222 });

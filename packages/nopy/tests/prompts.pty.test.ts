@@ -31,8 +31,12 @@ const hasPython = spawnSync('python3', ['--version']).status === 0;
 /** Down arrow — how the form moves from one field to the next. */
 const DOWN = '\u001b[B';
 
+// Waits for the *description*, not the key. The probe schema is written
+// `.describe(…).default(…)` — the order that used to lose the label — so this
+// step also witnesses the zod-wrapper unwrapping through a real enquirer render
+// rather than through the mocked Form in `prompts.test.ts`.
 const STEPS = [
-  { expect: 'ALPHA', send: 'alpha-typed', settle: 0.6 },
+  { expect: 'First value', send: 'alpha-typed', settle: 0.6 },
   { send: DOWN, settle: 0.4 },
   { send: 'beta-typed', settle: 0.4 },
   { send: '\r', settle: 1.2 },
