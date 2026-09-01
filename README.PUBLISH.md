@@ -131,7 +131,7 @@ tarball.
 
 ```
 checkout → resolve tag → check secrets
-        → pnpm → node → cache → install → check linked deps are released
+        → pnpm → node → cache → install
         → lint:ci → typecheck → test:coverage → build → verify-pack
         → publish to Gitea → publish to npmjs → delete .npmrc
         → create the Gitea release → step summary
@@ -141,13 +141,14 @@ Tag resolution and the secret check run **before** anything is installed or
 built, so a malformed tag or a missing token fails in seconds instead of after
 the whole gate.
 
-*Check linked deps are released* asks npmjs whether every `workspace:` dependency
-of the package being released already exists at the version pnpm is about to
-bake in (`scripts/linked-deps.mjs` → `npm view`). Tagging `nopy-v1.3.0` while
-`@bitsquare/nopy-cubes@1.1.0` is still unpublished would otherwise ship a tarball
-nobody can install, and npmjs only lets you unpublish for 72 hours. The check is
-npmjs-only: it runs before any credentials are written, and npmjs is the registry
-where the mistake is permanent.
+There used to be a *check linked deps are released* step between install and
+lint, refusing to publish a package whose `workspace:` dependency was not yet on
+npmjs. It is gone: [`scripts/release.mjs`](#cutting-a-release) is what creates
+release tags now, and it pushes them dependency-first and waits for each version
+to resolve on npmjs before pushing the next — so the ordering is enforced before
+CI sees a tag rather than after. The trade is that a tag pushed by hand is no
+longer caught; `node scripts/linked-deps.mjs <dir>` still prints what a package
+would bake in if you want to check yourself.
 
 ## The verification gate
 
@@ -236,14 +237,60 @@ edit is discarded with the workspace and is never committed.
 
 ## Cutting a release
 
+```sh
+pnpm run release
+```
+
+`scripts/release.mjs` does the whole sequence: pick the packages, pick each
+version, write the release notes, run the gate, commit, tag and push. Everything
+below describes what it does and how to do it by hand.
+
+It runs in this order, and the order is the point:
+
+1. **Preflight.** Refuses a dirty working tree (a release commit must contain the
+   bump and nothing else), warns if you are not on `main`, and refuses to run
+   when `main` is behind the remote — a tag on a stale commit ships a tree
+   nobody reviewed.
+2. **Pick.** A checklist of the publishable packages, each annotated with its
+   local version and what npmjs already has. If you select a package that others
+   link to, it says so and offers to add them.
+3. **Version.** `patch`/`minor`/`major`/`prerelease` computed from the manifest,
+   or type your own. Versions already on npmjs, and versions whose tag exists,
+   are shown struck out and cannot be chosen. A version that will not move
+   `latest` gets a warning rather than a refusal.
+4. **Notes.** Opens `$EDITOR` seeded with the commits since the package's last
+   tag, and prepends the result to `packages/<pkg>/CHANGELOG.md` in the format
+   the release body parser expects.
+5. **Verify.** `lint:ci → typecheck → test:coverage → build → verify-pack`,
+   against the bumped tree and **before** the commit, so a failure leaves nothing
+   to unpick — it offers to restore the tree instead.
+6. **Commit, tag, push.** One commit, one annotated tag per package, then the
+   branch, then the tags **dependency-first**. After each tag it polls npmjs
+   until that exact version resolves before pushing the next.
+
+Useful flags:
+
+```sh
+pnpm run release -- --dry-run                # print the plan, change nothing
+pnpm run release -- -p nopy -v minor         # skip the pickers
+pnpm run release -- -p nopy-cubes nopy       # several, ordered automatically
+pnpm run release -- --no-verify              # skip the gate (it still runs in CI)
+pnpm run release -- --no-wait                # push tags back to back
+```
+
+The push uses `SKIP_SIMPLE_GIT_HOOKS=1`, because the `pre-push` gate is the same
+one step 5 just ran against the same tree.
+
+### By hand
+
 1. Bump `version` in `packages/<pkg>/package.json`.
 2. Add a changelog entry (see below).
 3. Commit, merge to `main`, and let the snapshot workflow go green.
 4. Tag that commit and push the tag:
 
    ```sh
-   git tag nopy-v1.2.0
-   git push origin nopy-v1.2.0
+   git tag nopy-v<version>
+   git push origin nopy-v<version>
    ```
 
 The tag name is `<directory>-v<version>` — the directory under `packages/`, not
@@ -267,10 +314,13 @@ waiting for each run to go green:
 nopy-cubes  →  nopy, nopy-cubes-core   (these two are independent of each other)
 ```
 
-Release `nopy` first and the run stops at the *check linked deps* step, telling
-you the `nopy-cubes` version it wanted is not on npmjs. That is the guard working;
-release `nopy-cubes`, then re-tag. `node scripts/publish-order.mjs` prints the
-order if you would rather not reason about it.
+`pnpm run release` handles this for you — it sorts the selection over the
+`workspace:` edges and will not push `nopy`'s tag until `nopy-cubes`'s new
+version answers on npmjs. Releasing by hand, you own it: tag `nopy` first and its
+run publishes a tarball requiring a `nopy-cubes` version that does not exist, and
+npmjs only lets you unpublish for 72 hours. `node scripts/publish-order.mjs`
+prints the order, and `node scripts/linked-deps.mjs <dir>` prints exactly which
+versions a package would bake in.
 
 Bumping `nopy-cubes` means bumping the packages that depend on it in the same
 change — the `workspace:*` range resolves to whatever version is in the workspace
@@ -299,10 +349,12 @@ What a successful run leaves behind:
 
 ## Changelogs and release notes
 
-Neither package has a `CHANGELOG.md` yet. Without one, the Gitea release body is
-just the install snippet — nothing fails.
+`pnpm run release` writes these for you — it opens `$EDITOR` seeded with the
+commits since the package's last tag and prepends a `## <version> — <date>`
+section, creating the file the first time. A package with no `CHANGELOG.md` is
+fine: the Gitea release body degrades to the install snippet and nothing fails.
 
-When you add one, `release.yml` extracts the section for the version being
+`release.yml` extracts the section for the version being
 released. The parser is deliberately dumb: it looks for the first `## ` heading
 whose text contains the version string, and takes every line until the next `## `
 heading. Any of these work:
@@ -642,6 +694,12 @@ check CI runs:
 node scripts/verify-pack.mjs
 node scripts/publish-order.mjs             # the order to release in
 node scripts/linked-deps.mjs packages/nopy # what must be on the registry first
+```
+
+Rehearse a release without touching anything:
+
+```sh
+pnpm run release -- --dry-run
 ```
 
 See what is on each registry, and which versions Gitea has that npmjs does not:

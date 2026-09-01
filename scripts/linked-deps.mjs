@@ -5,10 +5,15 @@
  *
  * The version is the one the linked package declares *right now*, which is
  * exactly what `pnpm publish` will substitute for `workspace:*` when it packs.
- * A release can therefore check that each of them is already on the registry
- * before shipping a manifest that points at a version nobody can install.
+ * So this is the list of versions that must already be on the registry before
+ * shipping the package, or the tarball points at something nobody can install.
  *
  *   node scripts/linked-deps.mjs packages/nopy
+ *
+ * `release.yml` no longer runs this as a gate. `scripts/release.mjs` enforces
+ * the same ordering earlier and more cheaply, by pushing tags dependency-first
+ * and waiting for each version to appear on npmjs before pushing the next. This
+ * stays as the hand-check for when you want to see the list yourself.
  */
 
 import fs from 'node:fs';

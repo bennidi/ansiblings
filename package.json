@@ -14,6 +14,7 @@
     "test:coverage": "pnpm -r run test:coverage",
     "coverage:summary": "node scripts/coverage-summary.mjs",
     "registry:status": "node scripts/registry-status.mjs",
+    "release": "node scripts/release.mjs",
     "try:snapshot": "node scripts/try-snapshot.mjs",
     "typecheck": "tsc --build",
     "lint": "biome check .",
@@ -31,7 +32,11 @@
     "@bitsquare/nopy-cubes-core": "workspace:*",
     "@logtape/logtape": "^2.2.4",
     "@types/node": "^26.1.1",
+    "commander": "^15.0.0",
+    "enquirer": "^2.4.1",
+    "semver": "^7.8.5",
     "simple-git-hooks": "^2.13.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "zx": "^8.8.5"
   }
 }

@@ -26,12 +26,24 @@ importers:
       '@types/node':
         specifier: ^26.1.1
         version: 26.1.1
+      commander:
+        specifier: ^15.0.0
+        version: 15.0.0
+      enquirer:
+        specifier: ^2.4.1
+        version: 2.4.1
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
       simple-git-hooks:
         specifier: ^2.13.1
         version: 2.13.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+      zx:
+        specifier: ^8.8.5
+        version: 8.8.5
 
   packages/keyman:
     dependencies:

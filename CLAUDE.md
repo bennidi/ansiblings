@@ -142,13 +142,27 @@ One pass per invocation, `nopy.main.ts` orchestrating:
    variables (prompt, or read them back from the session on replay) → run
    `before` hooks → resolve `manifest.dependencies(vars)` (dynamic: it receives
    the *collected* variables) → emit the deploy call → run `after` hooks. There
-   is no separate topological sort; ordering falls out of the recursion, and a
-   `${cubeId}:${host}` set makes emission idempotent. Hooks get a `HookContext`
+   is no separate topological sort; emission is post-order, so the ordering *is*
+   topological without an algorithm computing it, and a `${cubeId}:${host}` set
+   makes emission idempotent. Hooks get a `HookContext`
    whose `exec(id, vars)` re-enters `resolveCube`, so a hook can pull in a cube
    that is not a declared dependency.
-6. **`nopy.executor.ts`** — runs the built `pyinfra <host> -y --data K=V ... --chdir <cubeDir> <script>`
+   Cycles are caught by a separate **resolution stack** — a (cube, host) pair
+   re-entered while still resolving raises with the whole path named. It has to
+   be separate from `resolvedCubes`, which is written *after* the descent and so
+   never sees a cycle at all, and which cannot be widened into a "seen" set
+   because re-entering a finished cube with different `param` overrides is
+   exactly what a dependency or a hook is for.
+6. **`nopy.executor.ts`** — runs the built
+   `pyinfra <host> -y [-vv] [--debug] --data K=V ... --chdir <cubeDir> <script>`
    commands through execa with inherited stdio, sequentially, stopping at the
-   first failure unless `continueOnError`.
+   first failure unless `continueOnError`. `DeployCall.command` is a true argv
+   and is spawned **without a shell**: it used to be joined into one string and
+   run through `execa({shell: true})`, which made every `--data` value shell
+   syntax — a password or a variable holding `;` or `$(…)` was executed. The only
+   thing that joins it back into a string is `maskCommand()`, for display, which
+   shell-quotes as it goes so `--print-only` output stays pasteable. The
+   verbosity/debug flags come from `config.log` through `logConfigToFlags()`.
 
 ### Variables
 
@@ -277,6 +291,14 @@ another edge to the publish order. Extract it if a third CLI appears.
 
 Tag-driven, one package at a time; see `README.PUBLISH.md`.
 
+`pnpm run release` (`scripts/release.mjs`, zx + enquirer + commander) is the
+front door: pick packages, pick versions, write notes into `CHANGELOG.md`, run
+the gate **against the bumped tree before committing** so a failure leaves
+nothing to unpick, then commit, tag and push. Tags go out dependency-first and it
+polls npmjs for each version before pushing the next — which is what replaced the
+CI-side linked-deps guard. Tags are annotated (`-a -m`), not lightweight: a
+lightweight tag is rejected outright under `tag.forceSignAnnotated`.
+
 ### Registry resolution
 
 The repo commits a root `.npmrc` mapping `@bitsquare:registry` to the Gitea
@@ -357,22 +379,28 @@ Three things the `workspace:*` links added, all of them non-obvious:
   `scripts/publish-order.mjs` topologically sorts over the `workspace:` edges;
   the snapshot workflow stamps *every* version first and only then publishes in
   that order, because `pnpm publish` reads the linked package's version at pack
-  time. `release.yml` additionally refuses to ship a package whose linked
-  dependency is not yet on npmjs (`scripts/linked-deps.mjs`) — npmjs is the
-  registry you cannot take a mistake back from.
+  time. `release.yml` used to additionally refuse to ship a package whose linked
+  dependency was not yet on npmjs (`scripts/linked-deps.mjs`); that step is gone,
+  and `scripts/release.mjs` enforces the same ordering earlier instead — it
+  pushes tags dependency-first and polls npmjs for each version before pushing
+  the next. `linked-deps.mjs` survives as a hand-check. A tag pushed some other
+  way is no longer caught, which is the accepted cost.
 
 ## Known drift
 
-`logConfigToFlags()` is exported and tested but nothing feeds its output into the
-built pyinfra command, so `log.verbosity` / `log.debug` in `.nopyrc.json`
-currently have no effect. Treat `docs/REFACTORING.md` as a plan, not a record.
+`logConfigToFlags()` is now consumed by `buildDeployCall`, so `log.verbosity` /
+`log.debug` in `.nopyrc.json` finally do what the README says. Note the
+consequence: `packages/nopy/.nopyrc.json` has always asked for
+`"verbosity": "trace", "debug": true`, and a run from that directory now actually
+gets `-vvv --debug`. Treat `docs/REFACTORING.md` as a plan, not a record.
 
 The publish lane has now run against the Gitea registry: all four packages are
 there under `@main`, and `pnpm run try:snapshot` installs them into a throwaway
 project with npm and runs the binary. The npmjs lane has only ever published
 `@bitsquare/nopy`; `keyman`, `nopy-cubes` and `nopy-cubes-core` have never been
-released there, so the *check linked deps are released* guard in `release.yml`
-will stop the first `nopy` release until `nopy-cubes` ships.
+released there. That used to be caught by the *check linked deps are released*
+guard in `release.yml`; now it is `pnpm run release` that holds `nopy`'s tag back
+until `nopy-cubes` answers on npmjs.
 
 Nothing checks that a bundle and the CLI reading it are compatible versions;
 `nopy.engines` was considered and deferred. `docs/CUBE-PACKAGES.md` is where all
@@ -383,10 +411,8 @@ from the plan.
 `src/index.ts` plus the authoring package; its *Known gaps* section is the short
 list of behaviour that surprises a reader (`--json` printing nothing on success,
 `DeployCall.dependencies` always empty, `ExecutionResult.stdout` never populated,
-no cycle detection, and `self-update` reporting an empty dist-tag as an
-unreachable registry). `CubePackageRef` is referenced by the exported
-`NopyConfig` but is not itself re-exported, so a consumer cannot name the type —
-one line, not yet fixed. `DOCS-AUDIT.md` tracks the drift in the remaining
+and `self-update` reporting an empty dist-tag as an unreachable registry).
+`DOCS-AUDIT.md` tracks the drift in the remaining
 documents; §2.9 (the nopy README shipping yarn-workspace instructions to npmjs)
 and §2.10 (the keyman README describing four of nine operations and inventing a
 tenth) are both closed. The keyman README now quotes `helpText()` verbatim and a

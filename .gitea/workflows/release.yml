@@ -125,32 +125,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Check the linked workspace packages are already released
-        env:
-          NAME: ${{ steps.target.outputs.name }}
-          DIR: ${{ steps.target.outputs.dir }}
-        run: |
-          set -euo pipefail
-          # `pnpm publish` turns `workspace:*` into the version the linked
-          # package declares at this commit. If that version is not on the
-          # registry yet, the release installs to a broken tree — and npmjs
-          # only lets you unpublish for 72 hours. Release the dependency first:
-          # nopy-cubes, then nopy, then any bundle.
-          #
-          # npmjs only: it is the irreversible one, and it needs no credentials
-          # to read, which this step does not have yet.
-          missing=0
-          for spec in $(node scripts/linked-deps.mjs "$DIR" | tr ' ' '@'); do
-            # Scoped, not `--registry`: `@scope:registry` outranks it, so a bare
-            # flag can be silently overridden by any project-level .npmrc.
-            if npm view "$spec" version --@bitsquare:registry="$NPMJS_REGISTRY" >/dev/null 2>&1; then
-              echo "${spec} is published"
-            else
-              echo "::error::${NAME} depends on ${spec}, which is not on npmjs. Release it first."
-              missing=1
-            fi
-          done
-          exit "$missing"
+      # There used to be a *check linked deps are released* step here, refusing
+      # to publish a package whose `workspace:` dependency was not yet on npmjs.
+      # It was removed: `scripts/release.mjs` is what creates release tags now,
+      # and it already pushes them dependency-first and waits for each version to
+      # resolve on npmjs before pushing the next — so the ordering is enforced
+      # before CI ever sees a tag, rather than after. `node scripts/linked-deps.mjs
+      # <dir>` still prints what a package would bake in, if you want to check by
+      # hand. A tag pushed some other way is no longer caught.
 
       - name: Lint
         run: pnpm run lint:ci
