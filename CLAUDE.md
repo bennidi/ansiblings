@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Rules
+
+- Do not create branches without being asked
+
 ## What this repo is
 
 A pnpm workspace holding two independently published CLIs, the authoring package
