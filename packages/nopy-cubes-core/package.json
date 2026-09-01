@@ -1,6 +1,6 @@
 {
   "name": "@bitsquare/nopy-cubes-core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The core nopy cube bundle: apt, users, ssh, networking, services and runtimes.",
   "keywords": [
     "nopy",
