@@ -1,9 +1,9 @@
 /**
  * Tests for the executeDeployCalls path of nopy.executor.
  *
- * execa is mocked so no pyinfra process is ever spawned. Note the shape:
- * the module calls execa({ shell: true })(command, opts), so the mock is a
- * factory returning the runner.
+ * execa is mocked so no pyinfra process is ever spawned. The module calls
+ * `execa(file, args, opts)` directly — no shell, so no factory call to unwrap
+ * as there was while it went through `execa({ shell: true })`.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const runner = vi.fn();
 
 vi.mock('execa', () => ({
-  execa: vi.fn(() => runner),
+  execa: vi.fn((...args: unknown[]) => runner(...args)),
 }));
 
 import { execa } from 'execa';
@@ -50,14 +50,25 @@ describe('executeDeployCalls', () => {
     logSpy.mockRestore();
   });
 
-  it('runs the joined command in the call cwd with inherited stdio', async () => {
+  it('spawns the argv directly in the call cwd with inherited stdio', async () => {
     await executeDeployCalls([call('cube-a')]);
 
-    expect(execa).toHaveBeenCalledWith({ shell: true });
-    expect(runner).toHaveBeenCalledWith('pyinfra web-1 -y cube-a.deploy.py', {
+    expect(execa).toHaveBeenCalledWith('pyinfra', ['web-1', '-y', 'cube-a.deploy.py'], {
       cwd: '/cubes/cube-a',
       stdio: 'inherit',
     });
+  });
+
+  it('never asks execa for a shell', async () => {
+    // The regression that matters: with `shell: true` every `--data` value was
+    // shell syntax, so a password or a variable containing `;` or `$(…)` ran.
+    await executeDeployCalls([
+      { ...call('cube-a'), command: ['pyinfra', 'web-1', '--data', 'MOTD=$(id); rm -rf /'] },
+    ]);
+
+    const [, , options] = vi.mocked(execa).mock.calls[0] as unknown[];
+    expect(options).not.toHaveProperty('shell');
+    expect(vi.mocked(execa).mock.calls[0][1]).toContain('MOTD=$(id); rm -rf /');
   });
 
   it('reports success with a non-negative duration', async () => {

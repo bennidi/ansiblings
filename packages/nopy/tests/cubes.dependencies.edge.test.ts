@@ -61,6 +61,45 @@ describe('BuildContext error handling', () => {
   });
 });
 
+describe('BuildContext log configuration', () => {
+  const build = (log: NopyConfig['log']) =>
+    new BuildContext(
+      { 'cube-a': testCube('cube-a') },
+      new Variables(),
+      session(),
+      { env: {}, log } as NopyConfig,
+      { method: 'ssh' },
+      { useDefaults: true }
+    );
+
+  it('passes the configured verbosity and debug flags to pyinfra', async () => {
+    const context = build({ verbosity: 'verbose', debug: true });
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.deployCalls[0].command.slice(0, 5)).toEqual([
+      'pyinfra',
+      'host1',
+      '-y',
+      '-vv',
+      '--debug',
+    ]);
+  });
+
+  it('adds nothing when no log config is set', async () => {
+    const context = build(undefined);
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.deployCalls[0].command.slice(0, 4)).toEqual([
+      'pyinfra',
+      'host1',
+      '-y',
+      '--chdir',
+    ]);
+  });
+});
+
 describe('BuildContext session replay', () => {
   it('takes variables from the session instead of prompting', async () => {
     const cube = testCube('cube-a', z.object({ PORT: z.string().default('3000') }));
@@ -344,7 +383,7 @@ describe('BuildContext --use-defaults', () => {
 
     await context.resolveCube('cube-a', 'host1');
 
-    expect(context.deployCalls[0].command.join(' ')).toContain('--data "PORT=8080"');
+    expect(context.deployCalls[0].command).toContain('PORT=8080');
   });
 
   it('refuses to run a cube whose variable nothing can supply', async () => {
@@ -485,12 +524,28 @@ describe('BuildContext command construction', () => {
     });
 
     await context.resolveCube('cube-a', 'host1');
-    const command = context.deployCalls[0].command.join(' ');
+    const command = context.deployCalls[0].command;
 
-    expect(command).toContain('--data "PORT=3000"');
-    expect(command).toContain('--chdir /test/cube-a');
+    // argv, not a shell string: each flag and its value are separate elements,
+    // and nothing is pre-quoted.
+    expect(command).toContain('PORT=3000');
+    expect(command.join(' ')).toContain('--data PORT=3000');
+    expect(command.join(' ')).toContain('--chdir /test/cube-a');
     expect(command).toContain('/test/cube-a/deploy.py');
     expect(context.deployCalls[0].cwd).toBe('/test/cube-a');
+  });
+
+  it('keeps a value with shell metacharacters in one argv element', async () => {
+    // The whole point of dropping `shell: true`. Joined and handed to a shell,
+    // this value would have run `id` and swallowed the rest of the command.
+    const cube = testCube('cube-a', z.object({ MOTD: z.string().default('$(id); rm -rf /') }));
+    const context = new BuildContext({ 'cube-a': cube }, new Variables(), session(), config, {
+      method: 'ssh',
+    });
+
+    await context.resolveCube('cube-a', 'host1');
+
+    expect(context.deployCalls[0].command).toContain('MOTD=$(id); rm -rf /');
   });
 
   it('builds a separate call per host but records the cube session once', async () => {

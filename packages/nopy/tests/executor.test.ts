@@ -126,7 +126,7 @@ describe('outputExecutionPlan', () => {
   it('masks variables the manifest declared secret', () => {
     const call: DeployCall = {
       ...createTestCall('cube-a', 'host1'),
-      command: ['pyinfra', 'host1', '-y', '--data "PASSWORD=hunter2"', '--data "OTHER=visible"'],
+      command: ['pyinfra', 'host1', '-y', '--data', 'PASSWORD=hunter2', '--data', 'OTHER=visible'],
       env: { PASSWORD: 'hunter2', OTHER: 'visible' },
       secrets: ['PASSWORD'],
     };
@@ -186,39 +186,76 @@ describe('maskCommand', () => {
 
   it('replaces the value of a declared secret', () => {
     const masked = maskCommand(
-      call(['pyinfra', 'host1', '--data "PASSWORD=hunter2"'], ['PASSWORD'])
+      call(['pyinfra', 'host1', '--data', 'PASSWORD=hunter2'], ['PASSWORD'])
     );
 
-    expect(masked).toBe('pyinfra host1 --data "PASSWORD=********"');
+    expect(masked).toBe('pyinfra host1 --data PASSWORD=********');
   });
 
   it('leaves other data alone', () => {
     const masked = maskCommand(
-      call(['--data "SSID=home"', '--data "PASSWORD=hunter2"'], ['PASSWORD'])
+      call(['--data', 'SSID=home', '--data', 'PASSWORD=hunter2'], ['PASSWORD'])
     );
 
-    expect(masked).toBe('--data "SSID=home" --data "PASSWORD=********"');
+    expect(masked).toBe('--data SSID=home --data PASSWORD=********');
   });
 
-  it('masks a value containing spaces up to the closing quote', () => {
-    const masked = maskCommand(call(['--data "PASSWORD=two words"', '--chdir /x'], ['PASSWORD']));
+  it('masks a value containing spaces', () => {
+    const masked = maskCommand(
+      call(['--data', 'PASSWORD=two words', '--chdir', '/x'], ['PASSWORD'])
+    );
 
-    expect(masked).toBe('--data "PASSWORD=********" --chdir /x');
+    expect(masked).toBe('--data PASSWORD=******** --chdir /x');
   });
 
   it('masks an empty secret value', () => {
-    expect(maskCommand(call(['--data "PASSWORD="'], ['PASSWORD']))).toBe(
-      '--data "PASSWORD=********"'
+    expect(maskCommand(call(['--data', 'PASSWORD='], ['PASSWORD']))).toBe(
+      '--data PASSWORD=********'
     );
   });
 
+  it('masks a secret whose value contains a quote', () => {
+    // The old implementation bounded the value on the closing `"` the builder
+    // had written, so a value containing one leaked the rest of itself.
+    const masked = maskCommand(call(['--data', 'PASSWORD=he said "hi"'], ['PASSWORD']));
+
+    expect(masked).toBe('--data PASSWORD=********');
+    expect(masked).not.toContain('hi');
+  });
+
   it('masks the ssh password whether or not the cube declares secrets', () => {
-    const masked = maskCommand(call(['pyinfra', 'host1', '--user bob --password s3cr3t', '-y']));
+    const masked = maskCommand(
+      call(['pyinfra', 'host1', '--user', 'bob', '--password', 's3cr3t', '-y'])
+    );
 
     expect(masked).toBe('pyinfra host1 --user bob --password ******** -y');
   });
 
   it('returns the command untouched when there is nothing to hide', () => {
     expect(maskCommand(call(['pyinfra', 'host1', '-y']))).toBe('pyinfra host1 -y');
+  });
+
+  it('quotes an argument a shell would otherwise re-parse', () => {
+    // Display only — nothing runs through a shell — but `--print-only` output is
+    // meant to be pasteable, so it has to survive the round trip.
+    const masked = maskCommand(call(['--data', 'MOTD=$(id); rm -rf /']));
+
+    expect(masked).toBe(`--data 'MOTD=$(id); rm -rf /'`);
+  });
+
+  it('escapes an embedded single quote', () => {
+    expect(maskCommand(call(['--data', "NAME=o'brien"]))).toBe(`--data 'NAME=o'\\''brien'`);
+  });
+
+  it('quotes an empty argument rather than dropping it', () => {
+    expect(maskCommand(call(['pyinfra', '']))).toBe("pyinfra ''");
+  });
+
+  it('leaves a trailing --password with no value alone', () => {
+    expect(maskCommand(call(['pyinfra', '--password']))).toBe('pyinfra --password');
+  });
+
+  it('handles a --data argument with no equals sign', () => {
+    expect(maskCommand(call(['--data', 'BARE'], ['BARE']))).toBe('--data BARE=********');
   });
 });

@@ -20,7 +20,11 @@ export interface DeployCall {
   host: string;
   /** Working directory for execution */
   cwd: string;
-  /** Full command array */
+  /**
+   * The command as argv — `command[0]` is the executable, the rest are its
+   * arguments, one element each and none of them quoted. Nothing joins this to
+   * run it; {@link maskCommand} joins it to *show* it.
+   */
   command: string[];
   /** Environment variables for the cube */
   env: Record<string, unknown>;
@@ -31,24 +35,55 @@ export interface DeployCall {
 }
 
 /**
+ * One argv element, quoted for a POSIX shell.
+ *
+ * Display only — nothing is executed through a shell any more. The point is
+ * that what `--print-only` writes can be pasted into a terminal and mean the
+ * same thing it meant here.
+ */
+function shellQuote(arg: string): string {
+  if (arg.length > 0 && /^[\w@%+=:,./-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * The command as it is safe to show: the SSH password, and every `--data KEY=…`
  * whose key the manifest declared a secret, have their values replaced.
  *
  * pyinfra takes its data on the command line, so the real values have to be in
  * `call.command` — this is the last point before they would reach a log, a
  * `--print-only` dump or a dry-run plan.
+ *
+ * Walks the argv rather than pattern-matching a joined string. The old version
+ * bounded a `--data` value on the closing quote the builder had written, which
+ * tied masking to a quoting convention two modules apart; a value containing a
+ * `"` broke it, and it was the same brittleness that made the command a shell
+ * injection in the first place. Position is not guessable.
  */
 export function maskCommand(call: DeployCall): string {
-  const command = call.command.join(' ');
-  const quoteMeta = (key: string) => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const secrets = new Set(call.secrets ?? []);
+  const argv = call.command;
+  const out: string[] = [];
 
-  // The builder always quotes a `--data` value, so the closing quote bounds it.
-  const masked = (call.secrets ?? []).reduce(
-    (acc, key) => acc.replace(new RegExp(`(--data "${quoteMeta(key)}=)[^"]*"`, 'g'), `$1${MASK}"`),
-    command
-  );
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const next = argv[i + 1];
 
-  return masked.replace(/(--password )\S+/g, `$1${MASK}`);
+    if (arg === '--password' && next !== undefined) {
+      out.push(arg, MASK);
+      i++;
+    } else if (arg === '--data' && next !== undefined) {
+      // Split on the first `=` only: the key cannot contain one, the value can.
+      const eq = next.indexOf('=');
+      const key = eq === -1 ? next : next.slice(0, eq);
+      out.push(arg, secrets.has(key) ? `${key}=${MASK}` : shellQuote(next));
+      i++;
+    } else {
+      out.push(shellQuote(arg));
+    }
+  }
+
+  return out.join(' ');
 }
 
 /**
@@ -107,14 +142,18 @@ export interface ExecutionOptions {
  */
 async function executeCall(call: DeployCall): Promise<ExecutionResult> {
   const startTime = Date.now();
-  const commandStr = call.command.join(' ');
+  const [file, ...args] = call.command;
 
   try {
     log.info(`Executing: ${call.cube} -> ${call.host}`);
     log.debug(`Command: ${maskCommand(call)}`);
 
-    // Inherit stdio for live output
-    await execa({ shell: true })(commandStr, {
+    // No shell. `execa({shell: true})` used to run the whole command as one
+    // string, which made every variable value shell syntax — a password or a
+    // `--data` value containing `;`, a backtick or `$(…)` was executed rather
+    // than passed along. Spawning the argv directly removes the parse step;
+    // pyinfra is still found on PATH, and stdio stays inherited for live output.
+    await execa(file, args, {
       cwd: call.cwd,
       stdio: 'inherit',
     });

@@ -7,6 +7,7 @@ import type { Cube, CubeVariables, HookContext } from '@bitsquare/nopy-cubes';
 import { getLogger } from '@logtape/logtape';
 import type { Variables } from '../nopy.common.js';
 import type { NopyConfig } from '../nopy.config.js';
+import { logConfigToFlags } from '../nopy.config.js';
 import { NopyUsageError } from '../nopy.errors.js';
 import type { DeployCall } from '../nopy.executor.js';
 import { VariableAssignment } from '../nopy.prompts.js';
@@ -205,6 +206,14 @@ export class BuildContext {
 
   /**
    * Builds and stores a deployment call for a resolved cube
+   *
+   * `command` is a true argv — one array element per argument, nothing
+   * pre-quoted. The executor spawns it without a shell, so a value containing a
+   * space, a quote or a `$(…)` is passed through verbatim instead of being
+   * re-parsed. It used to be a list of fragments joined into one shell string,
+   * which meant any variable value was shell syntax: an SSH password with a `;`
+   * in it ran whatever followed. {@link maskCommand} is the only thing that
+   * turns this back into a string, for display, and quotes as it goes.
    */
   private buildDeployCall(cube: Cube, host: string): void {
     const cubeId = cube.id;
@@ -212,17 +221,17 @@ export class BuildContext {
 
     if (this.resolvedCubes.has(callKey)) return;
 
-    const parts: string[] = [];
+    const parts: string[] = [...logConfigToFlags(this.config.log)];
     if (this.auth.method === 'password' && this.auth.username && this.auth.password) {
-      parts.push(`--user ${this.auth.username} --password ${this.auth.password}`);
+      parts.push('--user', this.auth.username, '--password', this.auth.password);
     }
 
     const cubeVars = this.variables.get(cubeId);
     Object.entries(cubeVars).forEach(([key, value]) => {
-      parts.push(`--data "${key}=${value}"`);
+      parts.push('--data', `${key}=${value}`);
     });
 
-    parts.push(`--chdir ${cube.dir}`);
+    parts.push('--chdir', cube.dir);
     parts.push(`${cube.dir}/${cube.deployScript}`);
 
     const command = ['pyinfra', host, '-y', ...parts];
