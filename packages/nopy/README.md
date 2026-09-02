@@ -501,6 +501,19 @@ pnpm --filter @bitsquare/nopy run nopy     # runs the CLI from source via tsx
 
 ### Basic Commands
 
+**Start a new project**:
+
+```bash
+nopy init
+```
+
+Writes two files into the current directory and touches nothing that already
+exists (`--force` overwrites): a starter `.nopyrc.json` — the file without
+which `nopy install` refuses to run — and `NOPY.LLM.md`, a bundled usage guide
+written for AI assistants. Point your coding agent at it (or let it discover
+the file) and it can answer nopy questions, write cubes, and plan deployments
+from project-local context instead of guessing.
+
 **Install cubes (default command)**:
 
 ```bash

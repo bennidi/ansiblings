@@ -17,6 +17,7 @@ import {
   getSessionById,
   listHistory,
 } from './nopy.history.js';
+import { formatInitResults, initProject } from './nopy.init.js';
 import { nopy } from './nopy.main.js';
 import type { Channel } from './nopy.update.js';
 import { formatCommand, selfUpdate, updateNotice } from './nopy.update.js';
@@ -58,6 +59,7 @@ program
     'after',
     `
 Examples:
+  $ nopy init                 Set up this directory (.nopyrc.json + NOPY.LLM.md)
   $ nopy                      Interactive cube selection and deployment
   $ nopy -R                   Repeat the last deployment session
   $ nopy -H <id>              Run a specific session from history
@@ -157,6 +159,20 @@ program
       // the process-level handler.
       if (isCancellation(error)) exitWithFarewell();
 
+      reportError(error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('init')
+  .description('Write a starter .nopyrc.json and the NOPY.LLM.md usage guide here')
+  .option('-f, --force', 'Overwrite files that already exist')
+  .action((options) => {
+    try {
+      const results = initProject({ force: options.force });
+      console.log(formatInitResults(results));
+    } catch (error) {
       reportError(error);
       process.exit(1);
     }

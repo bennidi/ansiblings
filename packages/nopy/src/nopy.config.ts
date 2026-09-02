@@ -129,7 +129,7 @@ const DEFAULT_CONFIG: NopyConfig = {
   env: {},
 };
 
-const CONFIG_FILENAME = '.nopyrc.json';
+export const CONFIG_FILENAME = '.nopyrc.json';
 
 /**
  * Finds all config files by traversing upwards from cwd to root

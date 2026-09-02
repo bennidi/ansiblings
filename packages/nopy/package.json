@@ -43,7 +43,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist .tsbuildinfo",
-    "build": "tsc && cp src/cubes/*.mjs dist/cubes/",
+    "build": "tsc && cp src/cubes/*.mjs dist/cubes/ && mkdir -p dist/templates && cp src/templates/*.md dist/templates/",
     "prepack": "pnpm run build",
     "link:local": "pnpm run build && npm link",
     "nopy": "tsx src/nopy.cli.ts",

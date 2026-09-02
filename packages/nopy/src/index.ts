@@ -62,6 +62,9 @@ export {
   removeFromHistory,
   saveHistory,
 } from './nopy.history.js';
+export type { InitFileResult, InitFileStatus, InitOptions } from './nopy.init.js';
+// Project initialization
+export { formatInitResults, GUIDE_FILENAME, initProject, STARTER_CONFIG } from './nopy.init.js';
 export type { NopyOptions, NopyResult } from './nopy.main.js';
 // Main entry point
 export { nopy } from './nopy.main.js';

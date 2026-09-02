@@ -25,6 +25,7 @@ If you are writing cubes rather than calling nopy from code, you want
 - [Workflow Module](#workflow-module)
 - [Session Module](#session-module)
 - [History Module](#history-module)
+- [Init Module](#init-module)
 - [Config Module](#config-module)
 - [Prompts Module](#prompts-module)
 - [Update Module](#update-module)
@@ -830,6 +831,33 @@ without the entry `-R` would have nothing to repeat.
 
 ---
 
+## Init Module
+
+Backs `nopy init`.
+
+### `initProject(options?)`
+
+```typescript
+function initProject(options?: { force?: boolean; dir?: string }): InitFileResult[];
+// InitFileResult: { file: string; path: string; status: 'created' | 'overwritten' | 'skipped' }
+```
+
+Writes `STARTER_CONFIG` as `.nopyrc.json` and the bundled `NOPY.LLM.md` usage
+guide (`GUIDE_FILENAME`) into `dir` (default: the working directory). Existing
+files are skipped unless `force` is set; the result names what happened to each
+file. The guide template ships in `dist/templates/` and is resolved relative to
+the module, so it works from source and from an installed package alike.
+
+`STARTER_CONFIG` deliberately leaves `cubePackages` empty: naming a bundle
+that is not installed is a hard error, and `init` must leave a config that
+loads.
+
+### `formatInitResults(results)`
+
+Renders the per-file report plus the next-steps hint that `nopy init` prints.
+
+---
+
 ## Config Module
 
 ### `NopyConfig`
@@ -1110,6 +1138,7 @@ do. Returns `{status, command, ran}`; `ran` is `false` for `dryRun`, and for
 ## CLI Usage
 
 ```bash
+nopy init                     # write a starter .nopyrc.json + NOPY.LLM.md here (-f overwrites)
 nopy install                  # interactive (the default command; `nopy` alone works, as does `nopy i`)
 nopy install -D               # use defaults, no variable prompts
 nopy install -K               # force SSH key auth
