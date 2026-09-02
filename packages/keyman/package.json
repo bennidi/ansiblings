@@ -1,6 +1,6 @@
 {
   "name": "@bitsquare/keyman",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "A system to simplify ssh key management",
   "keywords": [
     "ssh",
