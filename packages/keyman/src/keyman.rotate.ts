@@ -120,7 +120,7 @@ export async function rotateKey(
 
   const { key } = await inquirer.prompt<{ key: string }>([
     {
-      type: 'list',
+      type: 'select',
       name: 'key',
       message: 'Select the key to rotate:',
       choices: vaultKeys,
@@ -180,7 +180,7 @@ export async function retireKey(sshDir: string, keysDir: string, tmpDir: string)
 
   const { key } = await inquirer.prompt<{ key: string }>([
     {
-      type: 'list',
+      type: 'select',
       name: 'key',
       message: 'Select the key to retire:',
       choices: vaultKeys,

@@ -31,7 +31,7 @@ export async function decryptKeys(sshDir: string, keysDir: string, tmpDir: strin
       choices: vaultKeys,
     },
     {
-      type: 'list',
+      type: 'select',
       name: 'decryptMode',
       message: 'Choose decryption location:',
       // Named after the directories actually in use, which are configurable.

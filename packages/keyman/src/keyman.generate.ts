@@ -21,7 +21,7 @@ export interface KeyOptions {
 export async function promptKeyOptions(defaultIdentity?: string): Promise<KeyOptions> {
   const { algorithm } = await inquirer.prompt<{ algorithm: string }>([
     {
-      type: 'list',
+      type: 'select',
       name: 'algorithm',
       message: 'Select algorithm:',
       choices: ['ed25519', 'rsa'],

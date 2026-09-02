@@ -67,7 +67,7 @@ export async function keyman() {
     // 🔹 Show category selection
     const { category } = await inquirer.prompt<{ category: string }>([
       {
-        type: 'list',
+        type: 'select',
         name: 'category',
         message: 'Select operation:',
         choices: [

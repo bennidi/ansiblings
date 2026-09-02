@@ -22,7 +22,7 @@ export async function copyKey(sshDir: string, tmpDir: string) {
 
   const { selectedKey } = await inquirer.prompt<{ selectedKey: string }>([
     {
-      type: 'list',
+      type: 'select',
       name: 'selectedKey',
       message: 'Select key to copy public key from:',
       choices: keys,
