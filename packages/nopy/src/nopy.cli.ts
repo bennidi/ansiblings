@@ -7,7 +7,15 @@
 
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
+import type { NopyConfig } from './nopy.config.js';
 import { loadConfig } from './nopy.config.js';
+import {
+  assertCubeIdAvailable,
+  createCube,
+  cubeDirWarning,
+  formatCreateCubeResults,
+  suggestCubeDir,
+} from './nopy.create-cube.js';
 import { reportError } from './nopy.errors.js';
 import { exitWithFarewell, installGracefulExit, isCancellation } from './nopy.exit.js';
 import {
@@ -19,6 +27,7 @@ import {
 } from './nopy.history.js';
 import { formatInitResults, initProject } from './nopy.init.js';
 import { nopy } from './nopy.main.js';
+import { CubeScaffoldPrompts } from './nopy.prompts.js';
 import type { Channel } from './nopy.update.js';
 import { formatCommand, selfUpdate, updateNotice } from './nopy.update.js';
 
@@ -60,6 +69,7 @@ program
     `
 Examples:
   $ nopy init                 Set up this directory (.nopyrc.json + NOPY.LLM.md)
+  $ nopy create-cube          Scaffold a new cube (manifest.mjs + deploy.py)
   $ nopy                      Interactive cube selection and deployment
   $ nopy -R                   Repeat the last deployment session
   $ nopy -H <id>              Run a specific session from history
@@ -173,6 +183,44 @@ program
       const results = initProject({ force: options.force });
       console.log(formatInitResults(results));
     } catch (error) {
+      reportError(error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('create-cube [dir]')
+  .description('Scaffold a new cube (manifest.mjs + deploy.py) from the bundled templates')
+  .option('--id <id>', 'Cube id, e.g. net:tailscale')
+  .option('--name <name>', 'Human-readable cube name')
+  .option('-f, --force', 'Overwrite existing cube files')
+  .action(async (dirArg: string | undefined, options) => {
+    try {
+      // Config is optional here, unlike `install`: create-cube works in a bare
+      // directory too; the config only improves the suggested location.
+      let config: NopyConfig | undefined;
+      try {
+        config = loadConfig();
+      } catch {
+        config = undefined;
+      }
+
+      const answers = await CubeScaffoldPrompts(
+        { id: options.id, name: options.name, dir: dirArg },
+        (id) => suggestCubeDir(id, config)
+      );
+
+      await assertCubeIdAvailable(answers.id, answers.dir);
+      const results = createCube({ ...answers, force: options.force });
+      console.log(
+        formatCreateCubeResults(results, {
+          id: answers.id,
+          warning: cubeDirWarning(answers.dir),
+        })
+      );
+    } catch (error) {
+      if (isCancellation(error)) exitWithFarewell();
+
       reportError(error);
       process.exit(1);
     }

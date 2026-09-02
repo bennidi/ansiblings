@@ -22,6 +22,18 @@ export type {
 } from './nopy.config.js';
 // Configuration
 export { getConfigPaths, loadConfig, logConfigToFlags, saveConfig } from './nopy.config.js';
+export type { CreateCubeOptions } from './nopy.create-cube.js';
+// Cube scaffolding
+export {
+  assertCubeIdAvailable,
+  createCube,
+  cubeDirWarning,
+  DEPLOY_FILENAME,
+  formatCreateCubeResults,
+  MANIFEST_FILENAME,
+  suggestCubeDir,
+  validateCubeId,
+} from './nopy.create-cube.js';
 // Backwards compatibility - cubes namespace
 export { cubes } from './nopy.cubes.js';
 export type {

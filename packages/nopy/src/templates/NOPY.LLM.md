@@ -67,6 +67,8 @@ output. Exit code is `1` if any cube failed, `0` otherwise.
 ```
 nopy [install]              interactive: pick cubes, host, auth, variables
 nopy init                   write a starter .nopyrc.json and this guide (-f overwrites)
+nopy create-cube [dir]      scaffold a cube (manifest.mjs + deploy.py); prompts for
+                            what --id and --name do not supply (-f overwrites)
 nopy history                list recorded sessions (--json for machine-readable)
 nopy clear-history          delete all recorded sessions
 nopy self-update            update nopy on its release channel (--dry-run, --force,
@@ -155,6 +157,10 @@ path; it comes from `manifest.id`, falling back to an `[id]` prefix in
 `manifest.name`, then the directory basename.
 
 ## Authoring a cube
+
+`nopy create-cube --id myapp:caddy-site --name "Serve the app behind Caddy"`
+scaffolds the layout below with a loadable example schema to replace — fully
+non-interactive when both flags and the directory argument are given.
 
 Layout:
 

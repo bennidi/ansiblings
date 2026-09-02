@@ -9,6 +9,7 @@ import inquirer from 'inquirer';
 import type { z } from 'zod';
 import { type AnyObjectSchema, type Cube, zodInner, zodKind } from './cubes/index.js';
 import type { Variables } from './nopy.common.js';
+import { validateCubeId } from './nopy.create-cube.js';
 
 interface CubeChoice {
   /** Submitted value — enquirer returns the `name` of each selected choice. */
@@ -200,6 +201,55 @@ export async function HostSelection(hosts: string[]): Promise<string> {
   if (selectedHost.host === 'vagrant') return `@vagrant/${selectedHost.vagrantVM}`;
   if (selectedHost.host === 'docker') return `@docker/${selectedHost.dockerTarget.trim()}`;
   return selectedHost.customHost ?? selectedHost.host;
+}
+
+/** What `create-cube` needs to know before it can scaffold. */
+export interface CubeScaffoldAnswers {
+  id: string;
+  name: string;
+  dir: string;
+}
+
+/**
+ * Asks for whatever `create-cube` was not already told on the command line —
+ * a flag that was given is never re-asked. The directory default is derived
+ * from the id, which may itself have just been typed, hence the function
+ * rather than a precomputed value.
+ */
+export async function CubeScaffoldPrompts(
+  given: Partial<CubeScaffoldAnswers>,
+  suggestDir: (id: string) => string
+): Promise<CubeScaffoldAnswers> {
+  const answers = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'id',
+      message: 'Cube id (flat, e.g. net:tailscale):',
+      when: () => !given.id,
+      validate: (value: string) => validateCubeId(value) ?? true,
+    },
+    {
+      type: 'input',
+      name: 'name',
+      message: 'Cube name (the label shown in the cube list):',
+      when: () => !given.name,
+      validate: (value: string) => value.trim().length > 0 || 'Required',
+    },
+    {
+      type: 'input',
+      name: 'dir',
+      message: 'Directory to scaffold:',
+      when: () => !given.dir,
+      default: (soFar: { id?: string }) => suggestDir(given.id ?? soFar.id ?? ''),
+      validate: (value: string) => value.trim().length > 0 || 'Required',
+    },
+  ]);
+
+  return {
+    id: given.id ?? answers.id,
+    name: given.name ?? answers.name,
+    dir: given.dir ?? answers.dir,
+  };
 }
 
 /**

@@ -52,7 +52,12 @@ export interface InitOptions {
   dir?: string;
 }
 
-function writeGuarded(filePath: string, content: string, force: boolean): InitFileResult {
+/**
+ * Writes `filePath` unless it already exists and `force` is unset, and says
+ * which of the three it was. Shared with `create-cube`, which scaffolds under
+ * the same skip/overwrite rules.
+ */
+export function writeGuarded(filePath: string, content: string, force: boolean): InitFileResult {
   const existed = fs.existsSync(filePath);
   if (existed && !force) {
     return { file: path.basename(filePath), path: filePath, status: 'skipped' };

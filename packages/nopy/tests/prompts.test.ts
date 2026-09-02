@@ -41,6 +41,7 @@ import { Cube, Manifest } from '@bitsquare/nopy-cubes';
 import { Variables } from '../src/nopy.common.js';
 import {
   AuthSelection,
+  CubeScaffoldPrompts,
   CubeSelection,
   HostSelection,
   PasswordSelection,
@@ -530,5 +531,52 @@ describe('VariableAssignment', () => {
     );
 
     expect(variables.get('svc')).toEqual({ port: 9090, enabled: true, maybe: null });
+  });
+});
+
+describe('CubeScaffoldPrompts', () => {
+  const suggestDir = vi.fn((id: string) => `cubes/${id}`);
+
+  it('passes fully-given answers through without asking anything', async () => {
+    inquirerPrompt.mockResolvedValue({});
+
+    const given = { id: 'net:x', name: 'X', dir: 'cubes/net/x' };
+    await expect(CubeScaffoldPrompts(given, suggestDir)).resolves.toEqual(given);
+
+    for (const q of questions()) {
+      expect(q.when()).toBe(false);
+    }
+  });
+
+  it('asks only for what is missing and merges the answers', async () => {
+    inquirerPrompt.mockResolvedValue({ name: 'Typed name', dir: 'typed/dir' });
+
+    const result = await CubeScaffoldPrompts({ id: 'net:x' }, suggestDir);
+
+    expect(result).toEqual({ id: 'net:x', name: 'Typed name', dir: 'typed/dir' });
+    expect(question('id')?.when()).toBe(false);
+    expect(question('name')?.when()).toBe(true);
+    expect(question('dir')?.when()).toBe(true);
+  });
+
+  it('wires the id validation into the prompt', async () => {
+    inquirerPrompt.mockResolvedValue({ id: 'ok', name: 'n', dir: 'd' });
+
+    await CubeScaffoldPrompts({}, suggestDir);
+
+    const validate = question('id')?.validate;
+    expect(validate('net:x')).toBe(true);
+    expect(validate('has space')).toBeTypeOf('string');
+    expect(question('name')?.validate('  ')).toBeTypeOf('string');
+  });
+
+  it('derives the directory default from the id, typed or given', async () => {
+    inquirerPrompt.mockResolvedValue({ id: 'typed:id', name: 'n', dir: 'd' });
+
+    await CubeScaffoldPrompts({}, suggestDir);
+    expect(question('dir')?.default({ id: 'typed:id' })).toBe('cubes/typed:id');
+
+    await CubeScaffoldPrompts({ id: 'given:id' }, suggestDir);
+    expect(question('dir')?.default({})).toBe('cubes/given:id');
   });
 });
