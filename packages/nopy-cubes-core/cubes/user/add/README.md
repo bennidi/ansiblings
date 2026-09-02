@@ -47,22 +47,19 @@ This cube creates a new user account with a modern shell environment (Fish), SSH
     credential nobody had seen, and replaying that run produced a different one.
 
 - **GROUPS** (string, default: `''`)
-  - Comma-separated list of additional groups (e.g., `"docker,sudo"`)
+  - Space-separated list of additional groups (e.g., `"docker sudo"`)
   - Common groups:
     - `docker` - Run Docker without sudo
     - `sudo` - Administrative privileges
     - `www-data` - Web server file access
 
-- **PUBKEY** (string, **required** — no default)
+- **PUBKEY** (string, default: `''`)
   - SSH public key to authorize for the user
-  - Should be your public key for passwordless SSH access
-  - There is deliberately no default. It used to be a specific personal key, so
-    accepting the default authorized *someone else's* key on the new account.
-    No key would be a sensible guess, so the cube asks instead.
-  - Because it is required, `--use-defaults` refuses to run this cube unless
-    `PUBKEY` comes from `env` in `.nopyrc.json`, a dependency, or a hook.
-  - Submitting an empty value at the prompt authorizes no key at all (the account
-    is still created, with password login only).
+  - Empty (the default) authorizes no key at all — the account is created with
+    password login only. Some users simply do not need one.
+  - The default is deliberately empty, never a specific key. It used to be a
+    personal key, so accepting the default authorized *someone else's* key on
+    the new account.
 
 ## Dependencies
 
@@ -87,6 +84,9 @@ After deployment:
 
 ## Notes
 
+- If the user already exists, the cube does nothing at all — rerunning it would
+  reset the password and overwrite `~/.config/fish`, so an existing account is
+  left untouched.
 - The user's home directory is created at `/home/{USER}`
 - Fish configuration is stored in `/home/{USER}/.config/fish/`
 - Oh My Fish provides package management: `omf install <package>`

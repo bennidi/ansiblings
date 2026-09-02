@@ -17,12 +17,14 @@ export default Manifest({
     PASSWORD: z.string().describe('Password for the new user account').default('changeme'),
     GROUPS: z
       .string()
-      .describe('Comma-separated list of additional groups (e.g., "docker,sudo")')
+      .describe('Space-separated list of additional groups (e.g., "docker sudo")')
       .default(''),
-    // No default on purpose. This used to carry a specific personal key, which
-    // meant an unattended run authorised someone else's key on the new account.
-    // Leaving it required makes `--use-defaults` refuse by name instead of
-    // guessing, and there is no key that would be a sensible guess.
-    PUBKEY: z.string().describe('SSH public key to authorize for the user'),
+    // Empty by default, never a specific key: this used to carry a personal
+    // key, which meant an unattended run authorised someone else's key on the
+    // new account. Empty means no key is authorised — some users need none.
+    PUBKEY: z
+      .string()
+      .describe('SSH public key to authorize for the user (empty for none)')
+      .default(''),
   }),
 });
